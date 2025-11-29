@@ -28,6 +28,10 @@ func (d *TestDispatcher) DispatchLink(ctx context.Context, destination net.Desti
 	return nil
 }
 
+func (d *TestDispatcher) WrapLink(ctx context.Context, link *transport.Link) *transport.Link {
+	return link
+}
+
 func (d *TestDispatcher) Start() error {
 	return nil
 }
