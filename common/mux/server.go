@@ -5,7 +5,6 @@ import (
 	"io"
 	"time"
 
-	"github.com/xtls/xray-core/app/dispatcher"
 	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/buf"
 	"github.com/xtls/xray-core/common/errors"
@@ -64,7 +63,7 @@ func (s *Server) DispatchLink(ctx context.Context, dest net.Destination, link *t
 	if dest.Address != muxCoolAddress {
 		return s.dispatcher.DispatchLink(ctx, dest, link)
 	}
-	link = s.dispatcher.(*dispatcher.DefaultDispatcher).WrapLink(ctx, link)
+	link = s.dispatcher.WrapLink(ctx, link)
 	worker, err := NewServerWorker(ctx, s.dispatcher, link)
 	if err != nil {
 		return err
@@ -74,6 +73,11 @@ func (s *Server) DispatchLink(ctx context.Context, dest net.Destination, link *t
 	case <-worker.done.Wait():
 	}
 	return nil
+}
+
+// WrapLink implements routing.Dispatcher
+func (s *Server) WrapLink(ctx context.Context, link *transport.Link) *transport.Link {
+	return s.dispatcher.WrapLink(ctx, link)
 }
 
 // Start implements common.Runnable.
