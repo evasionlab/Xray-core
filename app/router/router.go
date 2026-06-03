@@ -125,17 +125,22 @@ func (r *Router) ReloadRules(config *Config, shouldAppend bool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if !shouldAppend {
-		for _, rule := range r.rules {
-			if rule.Webhook != nil {
-				rule.Webhook.Close()
-			}
+	balancers := r.balancers
+	rules := r.rules
+	domainStrategy := r.domainStrategy
+	if shouldAppend {
+		balancers = make(map[string]*Balancer, len(r.balancers)+len(config.BalancingRule))
+		for tag, balancer := range r.balancers {
+			balancers[tag] = balancer
 		}
-		r.balancers = make(map[string]*Balancer, len(config.BalancingRule))
-		r.rules = make([]*Rule, 0, len(config.Rule))
+		rules = append([]*Rule(nil), r.rules...)
+	} else {
+		balancers = make(map[string]*Balancer, len(config.BalancingRule))
+		rules = make([]*Rule, 0, len(config.Rule))
+		domainStrategy = config.DomainStrategy
 	}
 	for _, rule := range config.BalancingRule {
-		_, found := r.balancers[rule.Tag]
+		_, found := balancers[rule.Tag]
 		if found {
 			return errors.New("duplicate balancer tag")
 		}
@@ -144,21 +149,32 @@ func (r *Router) ReloadRules(config *Config, shouldAppend bool) error {
 			return err
 		}
 		balancer.InjectContext(r.ctx)
-		r.balancers[rule.Tag] = balancer
+		balancers[rule.Tag] = balancer
 	}
 
-	startIdx := len(r.rules)
+	startIdx := len(rules)
 	closeNewWebhooks := func() {
-		for i := startIdx; i < len(r.rules); i++ {
-			if r.rules[i].Webhook != nil {
-				r.rules[i].Webhook.Close()
+		for i := startIdx; i < len(rules); i++ {
+			if rules[i].Webhook != nil {
+				rules[i].Webhook.Close()
 			}
 		}
-		r.rules = r.rules[:startIdx]
+		rules = rules[:startIdx]
+	}
+	ruleExists := func(tag string) bool {
+		if tag == "" {
+			return false
+		}
+		for _, existing := range rules {
+			if existing.RuleTag == tag {
+				return true
+			}
+		}
+		return false
 	}
 
 	for _, rule := range config.Rule {
-		if r.RuleExists(rule.GetRuleTag()) {
+		if ruleExists(rule.GetRuleTag()) {
 			closeNewWebhooks()
 			return errors.New("duplicate ruleTag ", rule.GetRuleTag())
 		}
@@ -182,7 +198,7 @@ func (r *Router) ReloadRules(config *Config, shouldAppend bool) error {
 		}
 		btag := rule.GetBalancingTag()
 		if len(btag) > 0 {
-			brule, found := r.balancers[btag]
+			brule, found := balancers[btag]
 			if !found {
 				if rr.Webhook != nil {
 					rr.Webhook.Close()
@@ -192,8 +208,19 @@ func (r *Router) ReloadRules(config *Config, shouldAppend bool) error {
 			}
 			rr.Balancer = brule
 		}
-		r.rules = append(r.rules, rr)
+		rules = append(rules, rr)
 	}
+
+	if !shouldAppend {
+		for _, rule := range r.rules {
+			if rule.Webhook != nil {
+				rule.Webhook.Close()
+			}
+		}
+	}
+	r.domainStrategy = domainStrategy
+	r.balancers = balancers
+	r.rules = rules
 
 	return nil
 }
