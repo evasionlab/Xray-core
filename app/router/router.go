@@ -127,9 +127,10 @@ func (r *Router) ReloadRules(config *Config, shouldAppend bool) error {
 			return err
 		}
 		rr := &Rule{
-			Condition: cond,
-			Tag:       rule.GetTag(),
-			RuleTag:   rule.GetRuleTag(),
+			cacheLookupWait: rule.GetAsyncDnsRoute().GetCacheLookupWaitMillis() > 0,
+			Condition:       cond,
+			Tag:             rule.GetTag(),
+			RuleTag:         rule.GetRuleTag(),
 		}
 		// Track newly owned resources immediately so a later validation failure
 		// closes workers without touching the previous serving rule set.
@@ -223,6 +224,7 @@ func (r *Router) ListRule() []routing.Route {
 }
 
 func (r *Router) pickRouteInternal(ctx routing.Context) (*Rule, routing.Context, error) {
+	budgetAttached := false
 	// SkipDNSResolve is set from DNS module.
 	// the DOH remote server maybe a domain name,
 	// this prevents cycle resolving dead loop
@@ -235,6 +237,10 @@ func (r *Router) pickRouteInternal(ctx routing.Context) (*Rule, routing.Context,
 	rules := *r.rules.Load()
 
 	for _, rule := range rules {
+		if rule.cacheLookupWait && !budgetAttached {
+			ctx = withAsyncDNSWaitBudget(ctx)
+			budgetAttached = true
+		}
 		if rule.Apply(ctx) {
 			return rule, ctx, nil
 		}
@@ -248,6 +254,10 @@ func (r *Router) pickRouteInternal(ctx routing.Context) (*Rule, routing.Context,
 
 	// Try applying rules again if we have IPs.
 	for _, rule := range rules {
+		if rule.cacheLookupWait && !budgetAttached {
+			ctx = withAsyncDNSWaitBudget(ctx)
+			budgetAttached = true
+		}
 		if rule.Apply(ctx) {
 			return rule, ctx, nil
 		}

@@ -317,8 +317,8 @@ func (*RoutingRule_BalancingTag) isRoutingRule_TargetTag() {}
 
 // AsyncDnsRouteConfig is an opt-in Evasionlab extension used by an edge
 // process to project shared DNS route classifications locally. The classifier
-// endpoint is queried only by bounded background workers; it is never on the
-// route-selection critical path.
+// endpoint is queried only by bounded background workers. Cold L1 misses may
+// opt in to briefly awaiting one shared worker attempt.
 type AsyncDnsRouteConfig struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	Endpoint             string                 `protobuf:"bytes,1,opt,name=endpoint,proto3" json:"endpoint,omitempty"`
@@ -331,8 +331,11 @@ type AsyncDnsRouteConfig struct {
 	// Opt-in stale-while-revalidate ceiling; 0 disables stale routing. The
 	// classifier must also supply an authoritative remaining hard lifetime.
 	StaleGraceMillis uint32 `protobuf:"varint,8,opt,name=stale_grace_millis,json=staleGraceMillis,proto3" json:"stale_grace_millis,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Default 0: nonblocking. Maximum 250 ms, only on unusable/missing L1 entries.
+	// Waits for one shared classifier attempt, never for its DNS retry budget.
+	CacheLookupWaitMillis uint32 `protobuf:"varint,9,opt,name=cache_lookup_wait_millis,json=cacheLookupWaitMillis,proto3" json:"cache_lookup_wait_millis,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *AsyncDnsRouteConfig) Reset() {
@@ -417,6 +420,13 @@ func (x *AsyncDnsRouteConfig) GetMaxTtlMillis() uint32 {
 func (x *AsyncDnsRouteConfig) GetStaleGraceMillis() uint32 {
 	if x != nil {
 		return x.StaleGraceMillis
+	}
+	return 0
+}
+
+func (x *AsyncDnsRouteConfig) GetCacheLookupWaitMillis() uint32 {
+	if x != nil {
+		return x.CacheLookupWaitMillis
 	}
 	return 0
 }
@@ -793,7 +803,7 @@ const file_app_router_config_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\f\n" +
 	"\n" +
-	"target_tag\"\xc9\x02\n" +
+	"target_tag\"\x82\x03\n" +
 	"\x13AsyncDnsRouteConfig\x12\x1a\n" +
 	"\bendpoint\x18\x01 \x01(\tR\bendpoint\x124\n" +
 	"\x16request_timeout_millis\x18\x02 \x01(\rR\x14requestTimeoutMillis\x12%\n" +
@@ -802,7 +812,8 @@ const file_app_router_config_proto_rawDesc = "" +
 	"\aworkers\x18\x05 \x01(\rR\aworkers\x12$\n" +
 	"\x0emin_ttl_millis\x18\x06 \x01(\rR\fminTtlMillis\x12$\n" +
 	"\x0emax_ttl_millis\x18\a \x01(\rR\fmaxTtlMillis\x12,\n" +
-	"\x12stale_grace_millis\x18\b \x01(\rR\x10staleGraceMillis\"\xca\x01\n" +
+	"\x12stale_grace_millis\x18\b \x01(\rR\x10staleGraceMillis\x127\n" +
+	"\x18cache_lookup_wait_millis\x18\t \x01(\rR\x15cacheLookupWaitMillis\"\xca\x01\n" +
 	"\rWebhookConfig\x12\x10\n" +
 	"\x03url\x18\x01 \x01(\tR\x03url\x12$\n" +
 	"\rdeduplication\x18\x02 \x01(\rR\rdeduplication\x12E\n" +

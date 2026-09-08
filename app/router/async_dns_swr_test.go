@@ -240,7 +240,7 @@ func TestAsyncDNSRetryExhaustionHasCooldown(t *testing.T) {
 }
 
 func TestAsyncDNSRejectsUnboundedGrace(t *testing.T) {
-	if _, err := NewAsyncDNSRouteMatcher(&AsyncDnsRouteConfig{Endpoint: "http://example.com", StaleGraceMillis: 3600001}); err == nil {
+	if _, err := NewAsyncDNSRouteMatcher(&AsyncDnsRouteConfig{Endpoint: "http://example.com", StaleGraceMillis: 604800001}); err == nil {
 		t.Fatal("unbounded grace accepted")
 	}
 }

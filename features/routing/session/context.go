@@ -10,9 +10,18 @@ import (
 
 // Context is an implementation of routing.Context, which is a wrapper of context.context with session info.
 type Context struct {
+	caller   context.Context
 	Inbound  *session.Inbound
 	Outbound *session.Outbound
 	Content  *session.Content
+}
+
+// GetContext optionally exposes cancellation without extending routing.Context.
+func (ctx *Context) GetContext() context.Context {
+	if ctx.caller != nil {
+		return ctx.caller
+	}
+	return context.Background()
 }
 
 // GetInboundTag implements routing.Context.
@@ -156,6 +165,7 @@ func AsRoutingContext(ctx context.Context) routing.Context {
 	outbounds := session.OutboundsFromContext(ctx)
 	ob := outbounds[len(outbounds)-1]
 	return &Context{
+		caller:   ctx,
 		Inbound:  session.InboundFromContext(ctx),
 		Outbound: ob,
 		Content:  session.ContentFromContext(ctx),

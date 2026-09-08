@@ -29,6 +29,9 @@ const (
 	asyncDNSRetryBudget           = 30 * time.Second
 	asyncDNSMaxAttempts           = 8
 	asyncDNSActiveWindow          = time.Minute
+	asyncDNSMaxLookupWait         = 250 * time.Millisecond
+	asyncDNSMaxWaiters            = 1024
+	asyncDNSMaxStaleGrace         = 7 * 24 * time.Hour
 )
 
 var asyncDNSMatcherSequence atomic.Uint64
@@ -44,11 +47,19 @@ type asyncDNSCacheEntry struct {
 }
 
 type asyncDNSJob struct {
+	attempt   *asyncDNSAttempt
 	next      time.Time
 	deadline  time.Time
 	attempts  int
 	queued    bool
 	exhausted bool
+}
+
+// One queued/in-flight HTTP attempt, not the autonomous DNS retry budget.
+// Result fields become immutable before done closes under the matcher mutex.
+type asyncDNSAttempt struct {
+	done    chan struct{}
+	pending bool
 }
 
 type asyncDNSClassifierRequest struct {
@@ -66,8 +77,8 @@ type asyncDNSClassifierResponse struct {
 }
 
 // AsyncDNSRouteMatcher maintains a bounded L1 projection of the shared L2
-// classifier cache. Apply is deliberately non-blocking: a miss only queues a
-// background request and returns false so the normal fallback rule wins.
+// classifier cache. By default Apply is non-blocking. Opt-in cold misses can
+// briefly await one shared worker attempt; they never run per-connection HTTP.
 type AsyncDNSRouteMatcher struct {
 	endpoint      string
 	bearerToken   string
@@ -75,6 +86,8 @@ type AsyncDNSRouteMatcher struct {
 	cacheCapacity int
 	maxTTL        time.Duration
 	staleGrace    time.Duration
+	lookupWait    time.Duration
+	waiters       chan struct{}
 	ctx           context.Context
 	cancel        context.CancelFunc
 	queue         chan string
@@ -101,6 +114,12 @@ type asyncDNSStats struct {
 	evictions        atomic.Uint64
 	inheritedEntries atomic.Uint64
 	inheritedJobs    atomic.Uint64
+	lookupWaits      atomic.Uint64
+	lookupHits       atomic.Uint64
+	lookupTimeouts   atomic.Uint64
+	lookupPending    atomic.Uint64
+	lookupRejected   atomic.Uint64
+	lookupCanceled   atomic.Uint64
 }
 
 // AsyncDNSRouteStats is a low-cardinality snapshot without domain labels.
@@ -108,6 +127,9 @@ type AsyncDNSRouteStats struct {
 	FreshHits, StaleHits, Misses, QueueDrops, Requests, Errors, Exhausted uint64
 	MatcherID, Evictions, InheritedEntries, InheritedJobs                 uint64
 	Entries, Jobs, Queued                                                 int
+	LookupWaits, LookupHits, LookupTimeouts, LookupPending                uint64
+	LookupRejected, LookupCanceled                                        uint64
+	Waiters                                                               int
 }
 
 func (m *AsyncDNSRouteMatcher) Stats() AsyncDNSRouteStats {
@@ -119,6 +141,9 @@ func (m *AsyncDNSRouteMatcher) Stats() AsyncDNSRouteStats {
 		Requests: m.stats.requests.Load(), Errors: m.stats.errors.Load(), Exhausted: m.stats.exhausted.Load(),
 		MatcherID: m.matcherID, Evictions: m.stats.evictions.Load(), InheritedEntries: m.stats.inheritedEntries.Load(), InheritedJobs: m.stats.inheritedJobs.Load(),
 		Entries: len(m.cache), Jobs: len(m.jobs), Queued: len(m.queue),
+		LookupWaits: m.stats.lookupWaits.Load(), LookupHits: m.stats.lookupHits.Load(),
+		LookupTimeouts: m.stats.lookupTimeouts.Load(), LookupPending: m.stats.lookupPending.Load(),
+		LookupRejected: m.stats.lookupRejected.Load(), LookupCanceled: m.stats.lookupCanceled.Load(), Waiters: len(m.waiters),
 	}
 }
 
@@ -158,8 +183,12 @@ func NewAsyncDNSRouteMatcher(config *AsyncDnsRouteConfig) (*AsyncDNSRouteMatcher
 		return nil, errors.New("async DNS route min TTL is greater than max TTL")
 	}
 	staleGrace := time.Duration(config.GetStaleGraceMillis()) * time.Millisecond
-	if staleGrace > time.Hour {
-		return nil, errors.New("async DNS route stale grace exceeds one hour")
+	if staleGrace > asyncDNSMaxStaleGrace {
+		return nil, errors.New("async DNS route stale grace exceeds seven days")
+	}
+	lookupWait := time.Duration(config.GetCacheLookupWaitMillis()) * time.Millisecond
+	if lookupWait > asyncDNSMaxLookupWait {
+		return nil, errors.New("async DNS route cache lookup wait exceeds 250 milliseconds")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -174,6 +203,8 @@ func NewAsyncDNSRouteMatcher(config *AsyncDnsRouteConfig) (*AsyncDNSRouteMatcher
 		cacheCapacity: cacheCapacity,
 		maxTTL:        maxTTL,
 		staleGrace:    staleGrace,
+		lookupWait:    lookupWait,
+		waiters:       make(chan struct{}, asyncDNSMaxWaiters),
 		ctx:           ctx,
 		cancel:        cancel,
 		queue:         make(chan string, queueCapacity),
@@ -219,6 +250,8 @@ func (m *AsyncDNSRouteMatcher) inheritState(previous *AsyncDNSRouteMatcher) {
 			break
 		}
 		job := *previousJob
+		// Completion channels belong to the old workers and must never move.
+		job.attempt = nil
 		if job.exhausted && !now.Before(job.next) {
 			continue
 		}
@@ -275,7 +308,8 @@ func durationOrDefault(millis uint32, fallback time.Duration) time.Duration {
 	return time.Duration(millis) * time.Millisecond
 }
 
-// Apply consults only bounded in-memory state. Stale RU is accepted only within
+// Apply consults bounded L1 state and optionally waits for one shared L2 attempt.
+// Stale RU is accepted only within
 // the explicit local grace and the classifier's authoritative hard deadline.
 func (m *AsyncDNSRouteMatcher) Apply(ctx routing.Context) bool {
 	domain := normalizeAsyncDNSDomain(ctx.GetTargetDomain())
@@ -285,7 +319,6 @@ func (m *AsyncDNSRouteMatcher) Apply(ctx routing.Context) bool {
 
 	now := time.Now()
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if entry, found := m.cache[domain]; found {
 		if now.Before(entry.hardUntil) {
 			entry.lastUsed = now
@@ -298,6 +331,7 @@ func (m *AsyncDNSRouteMatcher) Apply(ctx routing.Context) bool {
 			} else {
 				m.stats.staleHits.Add(1)
 			}
+			m.mu.Unlock()
 			return entry.routeRU
 		}
 		// Keep a bounded tombstone until the server's generation expires. A
@@ -308,6 +342,78 @@ func (m *AsyncDNSRouteMatcher) Apply(ctx routing.Context) bool {
 	}
 	m.stats.misses.Add(1)
 	m.startJob(domain, now)
+	var attempt *asyncDNSAttempt
+	if job := m.jobs[domain]; job != nil && job.queued {
+		attempt = job.attempt
+	}
+	m.mu.Unlock()
+	if m.lookupWait == 0 || attempt == nil {
+		return false
+	}
+	return m.waitForAttempt(ctx, domain, attempt, now)
+}
+
+func (m *AsyncDNSRouteMatcher) waitForAttempt(ctx routing.Context, domain string, attempt *asyncDNSAttempt, started time.Time) bool {
+	caller := asyncDNSCallerContext(ctx)
+	deadline := started.Add(m.lookupWait)
+	if budget, ok := caller.Value(asyncDNSWaitBudgetKey{}).(*asyncDNSWaitBudget); ok {
+		deadline = budget.limit(deadline)
+	}
+	if caller.Err() != nil || m.closed.Load() {
+		m.stats.lookupCanceled.Add(1)
+		return false
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		m.stats.lookupTimeouts.Add(1)
+		return false
+	}
+	select {
+	case m.waiters <- struct{}{}:
+		defer func() { <-m.waiters }()
+	default:
+		m.stats.lookupRejected.Add(1)
+		return false
+	}
+	m.stats.lookupWaits.Add(1)
+	timer := time.NewTimer(remaining)
+	defer timer.Stop()
+	select {
+	case <-caller.Done():
+		m.stats.lookupCanceled.Add(1)
+		return false
+	case <-m.stop:
+		m.stats.lookupCanceled.Add(1)
+		return false
+	case <-timer.C:
+		m.stats.lookupTimeouts.Add(1)
+		return false
+	case <-attempt.done:
+	}
+	if caller.Err() != nil || m.closed.Load() {
+		m.stats.lookupCanceled.Add(1)
+		return false
+	}
+	if !time.Now().Before(deadline) {
+		m.stats.lookupTimeouts.Add(1)
+		return false
+	}
+	if attempt.pending {
+		m.stats.lookupPending.Add(1)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	if !now.Before(deadline) {
+		m.stats.lookupTimeouts.Add(1)
+		return false
+	}
+	if entry, ok := m.cache[domain]; ok && now.Before(entry.hardUntil) {
+		entry.lastUsed = now
+		m.cache[domain] = entry
+		m.stats.lookupHits.Add(1)
+		return entry.routeRU
+	}
 	return false
 }
 
@@ -329,6 +435,9 @@ func (m *AsyncDNSRouteMatcher) startJob(domain string, now time.Time) {
 func (m *AsyncDNSRouteMatcher) queueJob(domain string, job *asyncDNSJob, now time.Time) {
 	select {
 	case m.queue <- domain:
+		if m.lookupWait > 0 {
+			job.attempt = &asyncDNSAttempt{done: make(chan struct{})}
+		}
 		job.queued = true
 		job.attempts++
 	default:
@@ -403,6 +512,10 @@ func (m *AsyncDNSRouteMatcher) runScheduler() {
 					" requests=", s.Requests, " errors=", s.Errors, " evictions=", s.Evictions,
 					" queueDrops=", s.QueueDrops, " exhausted=", s.Exhausted,
 					" inheritedEntries=", s.InheritedEntries, " inheritedJobs=", s.InheritedJobs)
+				errors.LogInfo(m.ctx, "async DNS lookup stats matcherID=", s.MatcherID,
+					" waitMillis=", m.lookupWait.Milliseconds(), " waiters=", s.Waiters,
+					" waits=", s.LookupWaits, " hits=", s.LookupHits, " timeouts=", s.LookupTimeouts,
+					" pending=", s.LookupPending, " rejected=", s.LookupRejected, " canceled=", s.LookupCanceled)
 				nextStats = now.Add(time.Minute)
 			}
 		}
@@ -425,6 +538,9 @@ func (m *AsyncDNSRouteMatcher) refresh(domain string) {
 	}
 	if !started.Before(job.deadline) {
 		job.queued = false
+		if job.attempt != nil {
+			close(job.attempt.done)
+		}
 		m.exhaustJob(job, started)
 		m.mu.Unlock()
 		return
@@ -444,6 +560,10 @@ func (m *AsyncDNSRouteMatcher) refresh(domain string) {
 		return
 	}
 	job.queued = false
+	if job.attempt != nil {
+		job.attempt.pending = err == nil && response != nil && response.State == "pending"
+		defer close(job.attempt.done)
+	}
 	if err == nil && m.acceptResponse(domain, response, started, now) {
 		delete(m.jobs, domain)
 		return

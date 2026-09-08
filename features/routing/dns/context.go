@@ -17,6 +17,16 @@ type ResolvableContext struct {
 	hasError  bool
 }
 
+// GetContext preserves optional cancellation and route-selection wait budgets.
+func (ctx *ResolvableContext) GetContext() context.Context {
+	if carrier, ok := ctx.Context.(interface{ GetContext() context.Context }); ok {
+		if caller := carrier.GetContext(); caller != nil {
+			return caller
+		}
+	}
+	return context.Background()
+}
+
 // GetTargetIPs overrides original routing.Context's implementation.
 func (ctx *ResolvableContext) GetTargetIPs() []net.IP {
 	if len(ctx.cacheIPs) > 0 {

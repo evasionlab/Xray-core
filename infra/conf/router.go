@@ -130,14 +130,15 @@ type WebhookRuleConfig struct {
 }
 
 type AsyncDNSRouteRuleConfig struct {
-	Endpoint             string `json:"endpoint"`
-	RequestTimeoutMillis uint32 `json:"requestTimeoutMillis"`
-	CacheCapacity        uint32 `json:"cacheCapacity"`
-	QueueCapacity        uint32 `json:"queueCapacity"`
-	Workers              uint32 `json:"workers"`
-	MinTTLMillis         uint32 `json:"minTtlMillis"`
-	MaxTTLMillis         uint32 `json:"maxTtlMillis"`
-	StaleGraceMillis     uint32 `json:"staleGraceMillis"`
+	Endpoint              string `json:"endpoint"`
+	RequestTimeoutMillis  uint32 `json:"requestTimeoutMillis"`
+	CacheCapacity         uint32 `json:"cacheCapacity"`
+	QueueCapacity         uint32 `json:"queueCapacity"`
+	Workers               uint32 `json:"workers"`
+	MinTTLMillis          uint32 `json:"minTtlMillis"`
+	MaxTTLMillis          uint32 `json:"maxTtlMillis"`
+	StaleGraceMillis      uint32 `json:"staleGraceMillis"`
+	CacheLookupWaitMillis uint32 `json:"cacheLookupWaitMillis"`
 }
 
 func parseFieldRule(msg json.RawMessage) (*router.RoutingRule, error) {
@@ -288,14 +289,15 @@ func parseFieldRule(msg json.RawMessage) (*router.RoutingRule, error) {
 
 	if rawFieldRule.AsyncDNSRoute != nil {
 		rule.AsyncDnsRoute = &router.AsyncDnsRouteConfig{
-			Endpoint:             rawFieldRule.AsyncDNSRoute.Endpoint,
-			RequestTimeoutMillis: rawFieldRule.AsyncDNSRoute.RequestTimeoutMillis,
-			CacheCapacity:        rawFieldRule.AsyncDNSRoute.CacheCapacity,
-			QueueCapacity:        rawFieldRule.AsyncDNSRoute.QueueCapacity,
-			Workers:              rawFieldRule.AsyncDNSRoute.Workers,
-			MinTtlMillis:         rawFieldRule.AsyncDNSRoute.MinTTLMillis,
-			MaxTtlMillis:         rawFieldRule.AsyncDNSRoute.MaxTTLMillis,
-			StaleGraceMillis:     rawFieldRule.AsyncDNSRoute.StaleGraceMillis,
+			Endpoint:              rawFieldRule.AsyncDNSRoute.Endpoint,
+			RequestTimeoutMillis:  rawFieldRule.AsyncDNSRoute.RequestTimeoutMillis,
+			CacheCapacity:         rawFieldRule.AsyncDNSRoute.CacheCapacity,
+			QueueCapacity:         rawFieldRule.AsyncDNSRoute.QueueCapacity,
+			Workers:               rawFieldRule.AsyncDNSRoute.Workers,
+			MinTtlMillis:          rawFieldRule.AsyncDNSRoute.MinTTLMillis,
+			MaxTtlMillis:          rawFieldRule.AsyncDNSRoute.MaxTTLMillis,
+			StaleGraceMillis:      rawFieldRule.AsyncDNSRoute.StaleGraceMillis,
+			CacheLookupWaitMillis: rawFieldRule.AsyncDNSRoute.CacheLookupWaitMillis,
 		}
 	}
 

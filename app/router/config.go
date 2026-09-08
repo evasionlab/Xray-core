@@ -11,11 +11,12 @@ import (
 )
 
 type Rule struct {
-	Tag       string
-	RuleTag   string
-	Balancer  *Balancer
-	Condition Condition
-	Webhook   *WebhookNotifier
+	cacheLookupWait bool
+	Tag             string
+	RuleTag         string
+	Balancer        *Balancer
+	Condition       Condition
+	Webhook         *WebhookNotifier
 }
 
 func (r *Rule) GetTag() (string, error) {
@@ -110,16 +111,16 @@ func (rr *RoutingRule) BuildCondition() (Condition, error) {
 		conds.Add(cond)
 	}
 
+	if len(rr.Process) > 0 {
+		conds.Add(NewProcessNameMatcher(rr.Process))
+	}
+
 	if rr.AsyncDnsRoute != nil {
 		cond, err := NewAsyncDNSRouteMatcher(rr.AsyncDnsRoute)
 		if err != nil {
 			return nil, err
 		}
 		conds.Add(cond)
-	}
-
-	if len(rr.Process) > 0 {
-		conds.Add(NewProcessNameMatcher(rr.Process))
 	}
 
 	if conds.Len() == 0 {
