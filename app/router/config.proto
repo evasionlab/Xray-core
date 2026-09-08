@@ -77,6 +77,9 @@ message AsyncDnsRouteConfig {
   uint32 workers = 5;
   uint32 min_ttl_millis = 6;
   uint32 max_ttl_millis = 7;
+  // Opt-in stale-while-revalidate ceiling; 0 disables stale routing. The
+  // classifier must also supply an authoritative remaining hard lifetime.
+  uint32 stale_grace_millis = 8;
 }
 
 message WebhookConfig {
