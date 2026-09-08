@@ -135,3 +135,72 @@ L2 на втором edge. Затем один Gauss, малая Gauss cohort; �
 Rollback: убрать staleGraceMillis, при необходимости прежний immutable XrayR
 image. Старый classifier остаётся доступен через существующий blue/green owner.
 Cross-product дополнение — тот же infra ADR-20260904-02, без нового owner.
+
+## 2026-09-08: Быстрый L2 lookup при холодном L1 и длительный last-good
+
+Статус дополнения: Accepted для реализации; production-включение не выполнено.
+Этот раздел заменяет запрет любого сетевого ожидания в rule match **только**
+при явном `cacheLookupWaitMillis > 0`. Owner — `evasionlab/Xray-core`; consumers —
+XrayR и runtime-config compiler `vpn.bot`. Общее решение о client DNS, ёмкости,
+защите resolver и rollout хранится в `evasionlab/infra`; эта правка не открывает
+публичный DNS listener и не разрешает fleet expansion.
+
+### Контекст и проблема
+
+Тёплый общий L2 не помогает первому соединению при пустом L1: прежний edge сразу
+выбирает fallback, даже если готовое решение доступно за миллисекунды. Прогрев
+L2 клиентским DNS снижает число DNS miss, но не устраняет этот дефект L1. Более
+долгое хранение относится к `RU/other`, а не к IP-адресу для подключения.
+
+### Решение и границы
+
+- `cacheLookupWaitMillis`: default 0 (старое nonblocking поведение), диапазон
+  1–250 мс; начальный предлагаемый canary — 150 мс. На fresh/stale usable L1 hit
+  ожидания нет. На miss/hard expiry можно дождаться **одной** уже выполняемой
+  или поставленной в очередь shared HTTP-попытки. Pending/error завершают
+  ожидание сразу; фоновые DNS-повторы продолжаются отдельно с прежним budget.
+- HTTP по-прежнему выполняют только bounded workers. На домен один job, на его
+  HTTP-попытку один completion channel; goroutine/HTTP на соединение не создаются.
+  Очередь/worker count не увеличиваются. Между попытками (backoff/cooldown) edge
+  не ждёт будущего таймера. Полная очередь не создаёт дополнительную waiter queue.
+- На matcher максимум 1024 одновременно ожидающих вызова. При исчерпании
+  admission немедленный fallback. Таймер создаётся только принятому waiter;
+  mutex не удерживается во время ожидания. Close и отмена контекста соединения
+  освобождают waiter, не отменяя shared job из-за одного ушедшего клиента.
+- Один абсолютный budget на route selection: следующие правила и повторный
+  проход IPIfNonMatch не начинают срок заново. Он появляется только при
+  достижении opt-in правила; дешёвый process matcher стоит раньше async matcher.
+  Optional `GetContext()` сохраняет отмену в session/DNS wrappers без изменения
+  обязательного `routing.Context` interface. Для внешнего контекста без этого
+  метода остаются ограничение времени и Close, но нет caller cancellation.
+- `ready`/пригодный `stale` возвращает актуальный результат RU/other; timeout,
+  unusable response, pending/error и admission overflow сохраняют fallback.
+  Ни lookup, ни reload не возобновляют hard deadline/generation/retry budget.
+  Reload наследует только value state; completion channels принадлежат старым
+  workers, старые waiters освобождаются через Close.
+- Верхняя граница `staleGraceMillis` увеличена с 1 часа до 7 суток (604800000 мс),
+  default по-прежнему 0. Это разрешённый ceiling, а не автоматическое включение.
+  Fresh TTL, authoritative server hard lifetime, generation/tombstone semantics
+  остаются прежними. Бессрочного хранения или stale IP подключения нет.
+- Низкокардинальные counters: lookup waits/hits/timeouts/pending/rejected/canceled
+  и текущие waiters; без domain/user labels. Worker errors, queueDrops и retry
+  exhaustion остаются отдельными метриками. Hit включает RU и other.
+
+### Альтернативы, последствия, rollout
+
+Увеличить только L2: не исправляет первый L1 miss. Ждать весь DNS-resolve/retry
+budget: слишком длинная задержка и риск удержания соединений. Прямой HTTP на
+каждое соединение: лишняя нагрузка/неограниченная конкуренция. Бессрочный кеш:
+не выбран из-за неограниченного устаревания; длительный last-good имеет явный
+hard срок и фоновое обновление.
+
+Проверки: RU/other/stale/pending/error первой попытки, L1 hit без ожидания,
+жёсткий wait timeout, concurrent dedupe/cancel, Close/admission/reload, общий
+budget через несколько правил и DNS wrapper, default 0 и семисуточный ceiling;
+`go test -race` для focused router/config tests. Production canary должен
+доказать первый L1 miss при тёплом L2, bounded latency при L2 outage и трафик по
+ожидаемому outbound; клиентская DNS нагрузка проверяется отдельно её owner.
+Rollback ожидания — `cacheLookupWaitMillis: 0`; rollback retention — прежнее
+значение grace через runtime owner. Параметры включаются только scoped canary,
+не автоматически при доставке binary. Проверка cleanup/review — до расширения
+за пределы первой canary cohort.
