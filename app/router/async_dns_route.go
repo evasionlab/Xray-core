@@ -31,6 +31,8 @@ const (
 	asyncDNSActiveWindow          = time.Minute
 )
 
+var asyncDNSMatcherSequence atomic.Uint64
+
 type asyncDNSCacheEntry struct {
 	routeRU         bool
 	freshUntil      time.Time
@@ -80,6 +82,7 @@ type AsyncDNSRouteMatcher struct {
 	workers       sync.WaitGroup
 	closed        atomic.Bool
 	closeOnce     sync.Once
+	matcherID     uint64
 
 	mu    sync.Mutex
 	cache map[string]asyncDNSCacheEntry
@@ -88,18 +91,22 @@ type AsyncDNSRouteMatcher struct {
 }
 
 type asyncDNSStats struct {
-	freshHits  atomic.Uint64
-	staleHits  atomic.Uint64
-	misses     atomic.Uint64
-	queueDrops atomic.Uint64
-	requests   atomic.Uint64
-	errors     atomic.Uint64
-	exhausted  atomic.Uint64
+	freshHits        atomic.Uint64
+	staleHits        atomic.Uint64
+	misses           atomic.Uint64
+	queueDrops       atomic.Uint64
+	requests         atomic.Uint64
+	errors           atomic.Uint64
+	exhausted        atomic.Uint64
+	evictions        atomic.Uint64
+	inheritedEntries atomic.Uint64
+	inheritedJobs    atomic.Uint64
 }
 
 // AsyncDNSRouteStats is a low-cardinality snapshot without domain labels.
 type AsyncDNSRouteStats struct {
 	FreshHits, StaleHits, Misses, QueueDrops, Requests, Errors, Exhausted uint64
+	MatcherID, Evictions, InheritedEntries, InheritedJobs                 uint64
 	Entries, Jobs, Queued                                                 int
 }
 
@@ -110,6 +117,7 @@ func (m *AsyncDNSRouteMatcher) Stats() AsyncDNSRouteStats {
 		FreshHits: m.stats.freshHits.Load(), StaleHits: m.stats.staleHits.Load(),
 		Misses: m.stats.misses.Load(), QueueDrops: m.stats.queueDrops.Load(),
 		Requests: m.stats.requests.Load(), Errors: m.stats.errors.Load(), Exhausted: m.stats.exhausted.Load(),
+		MatcherID: m.matcherID, Evictions: m.stats.evictions.Load(), InheritedEntries: m.stats.inheritedEntries.Load(), InheritedJobs: m.stats.inheritedJobs.Load(),
 		Entries: len(m.cache), Jobs: len(m.jobs), Queued: len(m.queue),
 	}
 }
@@ -172,6 +180,7 @@ func NewAsyncDNSRouteMatcher(config *AsyncDnsRouteConfig) (*AsyncDNSRouteMatcher
 		stop:          make(chan struct{}),
 		cache:         make(map[string]asyncDNSCacheEntry, cacheCapacity),
 		jobs:          make(map[string]*asyncDNSJob),
+		matcherID:     asyncDNSMatcherSequence.Add(1),
 	}
 	m.workers.Add(workerCount)
 	for range workerCount {
@@ -180,6 +189,52 @@ func NewAsyncDNSRouteMatcher(config *AsyncDnsRouteConfig) (*AsyncDNSRouteMatcher
 	m.workers.Add(1)
 	go m.runScheduler()
 	return m, nil
+}
+
+// inheritState is called only for an identical full router configuration. The
+// new matcher owns its own workers/HTTP context; only bounded value state moves.
+// Absolute deadlines, generations, retry attempts and cooldowns never restart.
+func (m *AsyncDNSRouteMatcher) inheritState(previous *AsyncDNSRouteMatcher) {
+	if m == previous || m.bearerToken != previous.bearerToken {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	previous.mu.Lock()
+	defer previous.mu.Unlock()
+	if previous.closed.Load() {
+		return
+	}
+	now := time.Now()
+	for domain, entry := range previous.cache {
+		if len(m.cache) >= m.cacheCapacity {
+			break
+		}
+		if now.Before(entry.serverHardUntil) {
+			m.cache[domain] = entry
+		}
+	}
+	for domain, previousJob := range previous.jobs {
+		if len(m.jobs) >= m.cacheCapacity {
+			break
+		}
+		job := *previousJob
+		if job.exhausted && !now.Before(job.next) {
+			continue
+		}
+		if !job.exhausted && !now.Before(job.deadline) {
+			continue
+		}
+		if job.queued {
+			// An old in-flight request will be cancelled when old rules close.
+			// Resume through the bounded scheduler, not by copying HTTP state.
+			job.queued = false
+			job.next = now
+		}
+		m.jobs[domain] = &job
+	}
+	m.stats.inheritedEntries.Store(uint64(len(m.cache)))
+	m.stats.inheritedJobs.Store(uint64(len(m.jobs)))
 }
 
 // The secret is local process configuration, never part of the owner-delivered
@@ -305,6 +360,7 @@ func (m *AsyncDNSRouteMatcher) runScheduler() {
 	defer m.workers.Done()
 	ticker := time.NewTicker(asyncDNSSchedulerInterval)
 	defer ticker.Stop()
+	nextStats := time.Now().Add(time.Minute)
 	for {
 		select {
 		case <-m.stop:
@@ -338,6 +394,17 @@ func (m *AsyncDNSRouteMatcher) runScheduler() {
 				}
 			}
 			m.mu.Unlock()
+			if !now.Before(nextStats) {
+				s := m.Stats()
+				errors.LogInfo(m.ctx, "async DNS route stats matcherID=", s.MatcherID,
+					" entries=", s.Entries, " jobs=", s.Jobs, " queued=", s.Queued,
+					" capacity=", m.cacheCapacity, " queueCapacity=", cap(m.queue), " graceMillis=", m.staleGrace.Milliseconds(),
+					" freshHits=", s.FreshHits, " staleHits=", s.StaleHits, " misses=", s.Misses,
+					" requests=", s.Requests, " errors=", s.Errors, " evictions=", s.Evictions,
+					" queueDrops=", s.QueueDrops, " exhausted=", s.Exhausted,
+					" inheritedEntries=", s.InheritedEntries, " inheritedJobs=", s.InheritedJobs)
+				nextStats = now.Add(time.Minute)
+			}
 		}
 	}
 }
@@ -489,6 +556,7 @@ func (m *AsyncDNSRouteMatcher) evictIfNeeded(now time.Time) {
 	}
 	for domain := range m.cache {
 		delete(m.cache, domain)
+		m.stats.evictions.Add(1)
 		return
 	}
 }

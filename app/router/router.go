@@ -6,6 +6,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"google.golang.org/protobuf/proto"
+
 	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/common/serial"
@@ -27,6 +29,8 @@ type Router struct {
 	ohm        outbound.Manager
 	dispatcher routing.Dispatcher
 	mu         sync.Mutex
+	// Last successful full replacement, never caller-owned mutable config.
+	lastConfig *Config
 }
 
 // Route is an implementation of routing.Route.
@@ -85,6 +89,7 @@ func (r *Router) ReloadRules(config *Config, shouldAppend bool) error {
 
 	oldRules := *r.rules.Load()
 	oldBalancers := *r.balancers.Load()
+	preserveAsyncState := !shouldAppend && r.lastConfig != nil && proto.Equal(r.lastConfig, config)
 
 	var newRules []*Rule
 	newBalancers := make(map[string]*Balancer)
@@ -96,6 +101,13 @@ func (r *Router) ReloadRules(config *Config, shouldAppend bool) error {
 			existTags[rule.RuleTag] = true
 		}
 	}
+	inheritedCount := len(newRules)
+	committed := false
+	defer func() {
+		if !committed {
+			closeWebhooks(newRules[inheritedCount:])
+		}
+	}()
 
 	for _, rule := range config.BalancingRule {
 		if _, found := newBalancers[rule.Tag]; found {
@@ -109,7 +121,7 @@ func (r *Router) ReloadRules(config *Config, shouldAppend bool) error {
 		newBalancers[rule.Tag] = balancer
 	}
 
-	for _, rule := range config.Rule {
+	for index, rule := range config.Rule {
 		cond, err := rule.BuildCondition()
 		if err != nil {
 			return err
@@ -119,6 +131,9 @@ func (r *Router) ReloadRules(config *Config, shouldAppend bool) error {
 			Tag:       rule.GetTag(),
 			RuleTag:   rule.GetRuleTag(),
 		}
+		// Track newly owned resources immediately so a later validation failure
+		// closes workers without touching the previous serving rule set.
+		newRules = append(newRules, rr)
 		if rr.RuleTag != "" && existTags[rr.RuleTag] {
 			return errors.New("duplicate ruleTag ", rr.RuleTag)
 		}
@@ -137,13 +152,34 @@ func (r *Router) ReloadRules(config *Config, shouldAppend bool) error {
 			}
 			rr.Balancer = brule
 		}
-		newRules = append(newRules, rr)
+		if preserveAsyncState && index < len(oldRules) {
+			if next, previous := asyncDNSCondition(rr.Condition), asyncDNSCondition(oldRules[index].Condition); next != nil && previous != nil {
+				next.inheritState(previous)
+			}
+		}
 	}
 
 	r.balancers.Store(&newBalancers)
 	r.rules.Store(&newRules)
+	committed = true
+	if shouldAppend {
+		r.lastConfig = nil
+	} else {
+		r.lastConfig = proto.Clone(config).(*Config)
+	}
 	if !shouldAppend {
 		closeWebhooks(oldRules)
+	}
+	return nil
+}
+
+func asyncDNSCondition(condition Condition) *AsyncDNSRouteMatcher {
+	if chain, ok := condition.(*ConditionChan); ok {
+		for _, item := range *chain {
+			if matcher, ok := item.(*AsyncDNSRouteMatcher); ok {
+				return matcher
+			}
+		}
 	}
 	return nil
 }
@@ -168,6 +204,7 @@ func (r *Router) RemoveRule(tag string) error {
 		}
 	}
 	r.rules.Store(&newRules)
+	r.lastConfig = nil
 	closeWebhooks(removed)
 	return nil
 }
