@@ -52,6 +52,28 @@ IP allowlist дополняет bearer, но не заменяет service authe
 расширении. Секрет в runtime policy или URL отклонён из-за лишнего secret
 distribution surface. mTLS остаётся альтернативой при появлении PKI lifecycle.
 
+### Точный encrypted-overlay endpoint (2026-09-08)
+
+Для согласованного NetBird пути оператор может задать
+`XRAY_ASYNC_DNS_OVERLAY_ENDPOINT=http://100.75.19.209:8090/v1/classify`.
+Это явное подтверждение оператором защищённого сетевого пути, не автоматическое
+доверие private CIDR. Только буквальный IP с явным портом, без URL credentials,
+query и fragment, и точное совпадение полного endpoint разрешают HTTP bearer.
+Token file обязателен; ошибка конфигурации закрывает создание matcher. Имена
+хостов запрещены для исключения DNS rebinding. HTTP_PROXY/HTTPS_PROXY не
+используются для overlay, redirects запрещены при любом статусе.
+
+Внешняя граница безопасности принадлежит `vpn.infra`/оператору: listener только
+на NetBird IP, узкая peer policy edge→classifier на нужный порт, native bearer
+проверка classifier, доказательство P2P и успешного classify после переключения.
+Core не может доказать, что ОС отправляет этот IP через шифрованный туннель.
+HTTPS остаётся default и rollback; наличие overlay opt-in не запрещает HTTPS.
+XrayR наследует env процесса и точный core pin, схема runtime policy не меняется.
+Новая transport boundary не расширяет набор клиентов; дальнейшее расширение
+контролирует владелец rollout. Альтернатива — сохранить публичный Caddy/TLS;
+отклонена для внутреннего пути из-за измеренной CPU нагрузки proxy. Цена
+решения — перенос auth/listener/blue-green ответственности classifier/Ansible.
+
 ## Альтернативы
 
 - Глобальный `IPOnDemand`: отклонён, так как блокирует route selection DNS.
