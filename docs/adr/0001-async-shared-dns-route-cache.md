@@ -89,3 +89,49 @@ clients using the resolver listener.
 Да. Решение меняет cross-product dataplane, shared cache/storage и DNS
 delivery-flow. Локальный implementation ADR должен быть дополнен org-wide
 record в `evasionlab/infra` до production canary.
+
+## 2026-09-08: Ограниченный stale-while-revalidate и фоновые повторы
+
+Статус дополнения: Accepted; реализация и изолированные проверки, production
+пока остаётся на прежней версии. Этот раздел заменяет вышеописанное требование
+«только fresh RU» исключительно для opt-in `staleGraceMillis > 0`.
+
+L1 разделяет freshness и окончательный срок хранения. После freshness последняя
+классификация может использоваться до hard deadline, пока bounded worker
+обновляет её в фоне. Успешный `other` немедленно заменяет прежний RU. Ошибка,
+pending и повторное чтение не продлевают hard deadline; после него действует
+обычный fallback. Это осознанный риск кратковременно устаревшего маршрута,
+а не обещание постоянной доступности RU-egress.
+
+- `staleGraceMillis` по умолчанию 0; начальное значение canary — 600000 (10 минут).
+  Нет изменения DNS TTL через искусственное увеличение minTTL.
+- POST `/v1/classify` сохраняется; новый edge передаёт `allowStale: true` только
+  при включённом grace. `ready.ttlMillis` — оставшаяся свежесть;
+  `staleTtlMillis` — оставшийся **полный** срок до hard expiry, не добавочный grace.
+  `stale` допустим только opt-in потребителю и имеет ttlMillis=0. Legacy endpoint
+  без allowStale не отдаёт устаревшую запись как fresh ready.
+- `generation` меняется только после успешного canonical DNS fill. Повторный
+  ready/stale того же поколения не возобновляет локальный stale grace. При этом
+  доказанная оставшаяся freshness остаётся usable; новый DNS result может дать
+  новый срок. Старый producer без generation трактуется консервативно.
+- L1 вычитает время HTTP-запроса и ограничивает сроки серверными remaining TTL
+  и локальными caps. Старый classifier без нового поля не даёт права на stale.
+- Один bounded scheduler доводит pending/error до результата с конечным
+  бюджетом попыток, а также обновляет недавно использованные записи заранее.
+  Нет goroutine/timer на каждый домен, неограниченной retry-map или сетевого
+  ожидания в Apply. Close отменяет фоновые запросы.
+- Общий L2 использует отдельный versioned подпрефикс выделенного keyspace,
+  зависящий от GeoIP и resolver view. Старые данные не мигрируют и не удаляются.
+  В кеш не попадают outbound tags или ручные политики.
+
+Порядок статических правил, AsIs и raw-IP/CDN приоритеты не меняются. Public
+client DNS остаётся выключенным. Transport edge→classifier — существующий
+public HTTPS с allowlist+bearer; management overlay не заменяет этот путь.
+
+Минимальные доказательства: nonblocking cold miss, autonomous pending→ready,
+expiry/error до и после hard deadline, RU→other, bounded flood/Close и общий
+L2 на втором edge. Затем один Gauss, малая Gauss cohort; расширение только на
+согласованную группу bypass после traffic evidence. Не весь edge fleet.
+Rollback: убрать staleGraceMillis, при необходимости прежний immutable XrayR
+image. Старый classifier остаётся доступен через существующий blue/green owner.
+Cross-product дополнение — тот же infra ADR-20260904-02, без нового owner.

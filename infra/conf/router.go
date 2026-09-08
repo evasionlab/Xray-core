@@ -137,6 +137,7 @@ type AsyncDNSRouteRuleConfig struct {
 	Workers              uint32 `json:"workers"`
 	MinTTLMillis         uint32 `json:"minTtlMillis"`
 	MaxTTLMillis         uint32 `json:"maxTtlMillis"`
+	StaleGraceMillis     uint32 `json:"staleGraceMillis"`
 }
 
 func parseFieldRule(msg json.RawMessage) (*router.RoutingRule, error) {
@@ -294,6 +295,7 @@ func parseFieldRule(msg json.RawMessage) (*router.RoutingRule, error) {
 			Workers:              rawFieldRule.AsyncDNSRoute.Workers,
 			MinTtlMillis:         rawFieldRule.AsyncDNSRoute.MinTTLMillis,
 			MaxTtlMillis:         rawFieldRule.AsyncDNSRoute.MaxTTLMillis,
+			StaleGraceMillis:     rawFieldRule.AsyncDNSRoute.StaleGraceMillis,
 		}
 	}
 

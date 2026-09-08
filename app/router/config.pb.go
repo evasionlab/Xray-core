@@ -328,8 +328,11 @@ type AsyncDnsRouteConfig struct {
 	Workers              uint32                 `protobuf:"varint,5,opt,name=workers,proto3" json:"workers,omitempty"`
 	MinTtlMillis         uint32                 `protobuf:"varint,6,opt,name=min_ttl_millis,json=minTtlMillis,proto3" json:"min_ttl_millis,omitempty"`
 	MaxTtlMillis         uint32                 `protobuf:"varint,7,opt,name=max_ttl_millis,json=maxTtlMillis,proto3" json:"max_ttl_millis,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// Opt-in stale-while-revalidate ceiling; 0 disables stale routing. The
+	// classifier must also supply an authoritative remaining hard lifetime.
+	StaleGraceMillis uint32 `protobuf:"varint,8,opt,name=stale_grace_millis,json=staleGraceMillis,proto3" json:"stale_grace_millis,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *AsyncDnsRouteConfig) Reset() {
@@ -407,6 +410,13 @@ func (x *AsyncDnsRouteConfig) GetMinTtlMillis() uint32 {
 func (x *AsyncDnsRouteConfig) GetMaxTtlMillis() uint32 {
 	if x != nil {
 		return x.MaxTtlMillis
+	}
+	return 0
+}
+
+func (x *AsyncDnsRouteConfig) GetStaleGraceMillis() uint32 {
+	if x != nil {
+		return x.StaleGraceMillis
 	}
 	return 0
 }
@@ -783,7 +793,7 @@ const file_app_router_config_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\f\n" +
 	"\n" +
-	"target_tag\"\x9b\x02\n" +
+	"target_tag\"\xc9\x02\n" +
 	"\x13AsyncDnsRouteConfig\x12\x1a\n" +
 	"\bendpoint\x18\x01 \x01(\tR\bendpoint\x124\n" +
 	"\x16request_timeout_millis\x18\x02 \x01(\rR\x14requestTimeoutMillis\x12%\n" +
@@ -791,7 +801,8 @@ const file_app_router_config_proto_rawDesc = "" +
 	"\x0equeue_capacity\x18\x04 \x01(\rR\rqueueCapacity\x12\x18\n" +
 	"\aworkers\x18\x05 \x01(\rR\aworkers\x12$\n" +
 	"\x0emin_ttl_millis\x18\x06 \x01(\rR\fminTtlMillis\x12$\n" +
-	"\x0emax_ttl_millis\x18\a \x01(\rR\fmaxTtlMillis\"\xca\x01\n" +
+	"\x0emax_ttl_millis\x18\a \x01(\rR\fmaxTtlMillis\x12,\n" +
+	"\x12stale_grace_millis\x18\b \x01(\rR\x10staleGraceMillis\"\xca\x01\n" +
 	"\rWebhookConfig\x12\x10\n" +
 	"\x03url\x18\x01 \x01(\tR\x03url\x12$\n" +
 	"\rdeduplication\x18\x02 \x01(\rR\rdeduplication\x12E\n" +

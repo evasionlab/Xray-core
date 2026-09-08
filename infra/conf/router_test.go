@@ -249,7 +249,8 @@ func TestRouterConfigAsyncDNSRoute(t *testing.T) {
 				"queueCapacity": 256,
 				"workers": 3,
 				"minTtlMillis": 1000,
-				"maxTtlMillis": 60000
+				"maxTtlMillis": 60000,
+				"staleGraceMillis": 600000
 			}
 		}]
 	}`), config); err != nil {
@@ -264,7 +265,7 @@ func TestRouterConfigAsyncDNSRoute(t *testing.T) {
 		t.Fatal("asyncDnsRoute was not compiled into the routing rule")
 	}
 	got := built.Rule[0].AsyncDnsRoute
-	if got.GetEndpoint() != "https://dns-route-cache.tailnet.example/v1/classify" || got.GetWorkers() != 3 || got.GetMaxTtlMillis() != 60000 {
+	if got.GetEndpoint() != "https://dns-route-cache.tailnet.example/v1/classify" || got.GetWorkers() != 3 || got.GetMaxTtlMillis() != 60000 || got.GetStaleGraceMillis() != 600000 {
 		t.Fatalf("unexpected async DNS route config: %+v", got)
 	}
 }
