@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -69,20 +70,21 @@ type asyncDNSClassifierResponse struct {
 // classifier cache. Apply is deliberately non-blocking: a miss only queues a
 // background request and returns false so the normal fallback rule wins.
 type AsyncDNSRouteMatcher struct {
-	endpoint      string
-	bearerToken   string
-	client        *http.Client
-	cacheCapacity int
-	maxTTL        time.Duration
-	staleGrace    time.Duration
-	ctx           context.Context
-	cancel        context.CancelFunc
-	queue         chan string
-	stop          chan struct{}
-	workers       sync.WaitGroup
-	closed        atomic.Bool
-	closeOnce     sync.Once
-	matcherID     uint64
+	endpoint        string
+	bearerToken     string
+	overlayEndpoint string
+	client          *http.Client
+	cacheCapacity   int
+	maxTTL          time.Duration
+	staleGrace      time.Duration
+	ctx             context.Context
+	cancel          context.CancelFunc
+	queue           chan string
+	stop            chan struct{}
+	workers         sync.WaitGroup
+	closed          atomic.Bool
+	closeOnce       sync.Once
+	matcherID       uint64
 
 	mu    sync.Mutex
 	cache map[string]asyncDNSCacheEntry
@@ -135,7 +137,14 @@ func NewAsyncDNSRouteMatcher(config *AsyncDnsRouteConfig) (*AsyncDNSRouteMatcher
 	if err != nil {
 		return nil, err
 	}
-	if bearerToken != "" && (endpoint.Scheme != "https" || endpoint.User != nil) {
+	overlayEndpoint := os.Getenv("XRAY_ASYNC_DNS_OVERLAY_ENDPOINT")
+	if overlayEndpoint != "" {
+		overlay, parseErr := url.Parse(overlayEndpoint)
+		if parseErr != nil || overlay.Scheme != "http" || overlay.User != nil || overlay.RawQuery != "" || overlay.ForceQuery || overlay.Fragment != "" || net.ParseIP(overlay.Hostname()) == nil || overlay.Port() == "" || bearerToken == "" {
+			return nil, errors.New("async DNS overlay requires an exact HTTP IP endpoint with explicit port and bearer token")
+		}
+	}
+	if bearerToken != "" && (endpoint.User != nil || (endpoint.Scheme != "https" && endpoint.String() != overlayEndpoint)) {
 		return nil, errors.New("authenticated async DNS route endpoint requires HTTPS without URL credentials")
 	}
 
@@ -164,8 +173,9 @@ func NewAsyncDNSRouteMatcher(config *AsyncDnsRouteConfig) (*AsyncDNSRouteMatcher
 	ctx, cancel := context.WithCancel(context.Background())
 
 	m := &AsyncDNSRouteMatcher{
-		endpoint:    endpoint.String(),
-		bearerToken: bearerToken,
+		endpoint:        endpoint.String(),
+		bearerToken:     bearerToken,
+		overlayEndpoint: overlayEndpoint,
 		client: &http.Client{
 			Timeout: requestTimeout,
 			// Never forward service credentials to a redirect destination.
@@ -181,6 +191,13 @@ func NewAsyncDNSRouteMatcher(config *AsyncDnsRouteConfig) (*AsyncDNSRouteMatcher
 		cache:         make(map[string]asyncDNSCacheEntry, cacheCapacity),
 		jobs:          make(map[string]*asyncDNSJob),
 		matcherID:     asyncDNSMatcherSequence.Add(1),
+	}
+	if endpoint.String() == overlayEndpoint {
+		// The explicit endpoint is operator-attested encrypted overlay transport.
+		// Never send its credential through HTTP_PROXY or a DNS-resolved host.
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.Proxy = nil
+		m.client.Transport = transport
 	}
 	m.workers.Add(workerCount)
 	for range workerCount {
@@ -576,7 +593,7 @@ func (m *AsyncDNSRouteMatcher) fetchContext(ctx context.Context, domain string) 
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if m.bearerToken != "" {
-		if req.URL.Scheme != "https" || req.URL.User != nil {
+		if req.URL.User != nil || (req.URL.Scheme != "https" && req.URL.String() != m.overlayEndpoint) {
 			return nil, errors.New("refusing async DNS bearer token over an insecure endpoint")
 		}
 		req.Header.Set("Authorization", "Bearer "+m.bearerToken)
