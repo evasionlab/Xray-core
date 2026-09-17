@@ -18,8 +18,9 @@ type overrideEndpoint struct {
 	onInterrupt func()
 }
 
-func (e *overrideEndpoint) ReadMultiBuffer() (buf.MultiBuffer, error)   { return e.data, nil }
+func (e *overrideEndpoint) ReadMultiBuffer() (buf.MultiBuffer, error) { return e.data, nil }
 func (e *overrideEndpoint) WriteMultiBuffer(data buf.MultiBuffer) error { e.data = data; return nil }
+
 func (e *overrideEndpoint) Close() error {
 	e.closed++
 	if e.onClose != nil {
@@ -27,6 +28,7 @@ func (e *overrideEndpoint) Close() error {
 	}
 	return e.closeErr
 }
+
 func (e *overrideEndpoint) Interrupt() {
 	e.interrupted++
 	if e.onInterrupt != nil {
