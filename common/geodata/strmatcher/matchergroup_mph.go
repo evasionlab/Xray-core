@@ -2,7 +2,6 @@ package strmatcher
 
 import (
 	"math/bits"
-	"runtime"
 	"sort"
 	"strings"
 	"unsafe"
@@ -102,8 +101,9 @@ func (g *MphMatcherGroup) Build() error {
 		buckets[bucketIdx] = append(buckets[bucketIdx], uint32(ruleIdx))
 		g.values[ruleIdx] = append(ruleInfo.matchers[Full], ruleInfo.matchers[Domain]...) // nolint:gocritic
 	}
-	g.ruleInfos = nil // Set ruleInfos nil to release memory
-	runtime.GC()      // peak mem
+	// Release build-only metadata through normal GC. Forcing a collection here
+	// scans the entire live process heap on every runtime routing rule update.
+	g.ruleInfos = nil
 
 	// Sort buckets in descending order with respect to each bucket's size
 	bucketIdxs := make([]int, len(buckets))

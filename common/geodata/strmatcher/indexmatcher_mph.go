@@ -1,7 +1,5 @@
 package strmatcher
 
-import "runtime"
-
 // A MphIndexMatcher is divided into three parts:
 // 1. `full` and `domain` patterns are matched by Rabin-Karp algorithm and minimal perfect hash table;
 // 2. `substr` patterns are matched by ac automaton;
@@ -51,13 +49,10 @@ func (g *MphIndexMatcher) Add(matcher Matcher) uint32 {
 // Build implements IndexMatcher.Build.
 func (g *MphIndexMatcher) Build() error {
 	if g.mph != nil {
-		runtime.GC() // peak mem
 		g.mph.Build()
 	}
-	runtime.GC() // peak mem
 	if g.ac != nil {
 		g.ac.Build()
-		runtime.GC() // peak mem
 	}
 	return nil
 }
