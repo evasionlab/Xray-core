@@ -12,6 +12,7 @@ import (
 	"github.com/xtls/xray-core/common/session"
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/policy"
+	"github.com/xtls/xray-core/features/routing"
 	"github.com/xtls/xray-core/features/stats"
 	"github.com/xtls/xray-core/proxy"
 	"github.com/xtls/xray-core/transport/internet"
@@ -89,6 +90,11 @@ func NewAlwaysOnInboundHandler(ctx context.Context, tag string, receiverConfig *
 		mux:            mux.NewServer(ctx),
 		tag:            tag,
 	}
+	installed := core.MustFromContext(ctx).GetFeature(routing.DispatcherType()).(routing.Dispatcher)
+	dispatcher, err := routing.WrapInboundDispatcher(installed, h.mux)
+	if err != nil {
+		return nil, err
+	}
 
 	uplinkCounter, downlinkCounter := getStatCounter(core.MustFromContext(ctx), tag)
 
@@ -117,7 +123,7 @@ func NewAlwaysOnInboundHandler(ctx context.Context, tag string, receiverConfig *
 				proxy:           p,
 				stream:          mss,
 				tag:             tag,
-				dispatcher:      h.mux,
+				dispatcher:      dispatcher,
 				sniffingRequest: sniffingRequest,
 				uplinkCounter:   uplinkCounter,
 				downlinkCounter: downlinkCounter,
@@ -139,7 +145,7 @@ func NewAlwaysOnInboundHandler(ctx context.Context, tag string, receiverConfig *
 						stream:          mss,
 						recvOrigDest:    receiverConfig.ReceiveOriginalDestination,
 						tag:             tag,
-						dispatcher:      h.mux,
+						dispatcher:      dispatcher,
 						sniffingRequest: sniffingRequest,
 						uplinkCounter:   uplinkCounter,
 						downlinkCounter: downlinkCounter,
@@ -154,7 +160,7 @@ func NewAlwaysOnInboundHandler(ctx context.Context, tag string, receiverConfig *
 						proxy:           p,
 						address:         address,
 						port:            net.Port(port),
-						dispatcher:      h.mux,
+						dispatcher:      dispatcher,
 						sniffingRequest: sniffingRequest,
 						uplinkCounter:   uplinkCounter,
 						downlinkCounter: downlinkCounter,
