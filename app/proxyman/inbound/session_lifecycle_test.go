@@ -14,10 +14,12 @@ import (
 	"github.com/xtls/xray-core/transport/internet/stat"
 )
 
-type lifecycleKey struct{}
-type lifecycleProbe struct {
-	begin func(context.Context) (context.Context, func())
-}
+type (
+	lifecycleKey   struct{}
+	lifecycleProbe struct {
+		begin func(context.Context) (context.Context, func())
+	}
+)
 
 func (p *lifecycleProbe) BeginInboundSession(ctx context.Context) (context.Context, func()) {
 	return p.begin(ctx)
@@ -30,6 +32,7 @@ type lifecycleProxy struct {
 func (p lifecycleProxy) Network() []net.Network {
 	return []net.Network{net.Network_TCP, net.Network_UNIX}
 }
+
 func (p lifecycleProxy) Process(ctx context.Context, n net.Network, c stat.Connection, d routing.Dispatcher) error {
 	return p.process(ctx, n, c, d)
 }
@@ -45,6 +48,7 @@ func (c lifecycleConnection) LocalAddr() stdnet.Addr {
 	}
 	return &stdnet.TCPAddr{IP: stdnet.IPv4(127, 0, 0, 1), Port: 10443}
 }
+
 func (c lifecycleConnection) RemoteAddr() stdnet.Addr {
 	if c.network == net.Network_UNIX {
 		return &stdnet.UnixAddr{Name: "/tmp/core-lifecycle-peer", Net: "unix"}
