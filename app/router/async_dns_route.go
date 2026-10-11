@@ -143,9 +143,10 @@ type asyncDNSStats struct {
 	snapshotErrors   atomic.Uint64
 	restoredEntries  atomic.Uint64
 
-	poolAttempts      atomic.Uint64
-	poolFailovers     atomic.Uint64
-	poolCooldownSkips atomic.Uint64
+	poolAttempts          atomic.Uint64
+	poolFailovers         atomic.Uint64
+	poolCooldownSkips     atomic.Uint64
+	poolSyntheticCooldown atomic.Uint64
 }
 
 // AsyncDNSRouteStats is a low-cardinality snapshot without domain labels.
@@ -158,6 +159,7 @@ type AsyncDNSRouteStats struct {
 	WaitStarts, WaitDrops, WaitTimeouts, Expirations, SnapshotWrites, SnapshotErrors, RestoredEntries uint64
 	Waiters                                                                                           int
 	PoolAttempts, PoolFailovers, PoolCooldownSkips                                                    uint64
+	PoolSyntheticCooldown                                                                             uint64
 	PoolSize                                                                                          int
 }
 
@@ -181,7 +183,7 @@ func (m *AsyncDNSRouteMatcher) Stats() AsyncDNSRouteStats {
 		Entries: len(m.cache), Jobs: len(m.jobs), Queued: len(m.queue),
 		WaitStarts: m.stats.waitStarts.Load(), WaitDrops: m.stats.waitDrops.Load(), WaitTimeouts: m.stats.waitTimeouts.Load(), Waiters: m.waiters,
 		Expirations: m.stats.expirations.Load(), SnapshotWrites: m.stats.snapshotWrites.Load(), SnapshotErrors: m.stats.snapshotErrors.Load(), RestoredEntries: m.stats.restoredEntries.Load(),
-		PoolAttempts: m.stats.poolAttempts.Load(), PoolFailovers: m.stats.poolFailovers.Load(), PoolCooldownSkips: m.stats.poolCooldownSkips.Load(), PoolSize: poolSize,
+		PoolAttempts: m.stats.poolAttempts.Load(), PoolFailovers: m.stats.poolFailovers.Load(), PoolCooldownSkips: m.stats.poolCooldownSkips.Load(), PoolSize: poolSize, PoolSyntheticCooldown: m.stats.poolSyntheticCooldown.Load(),
 	}
 }
 
@@ -523,7 +525,23 @@ func (m *AsyncDNSRouteMatcher) queueJob(domain string, job *asyncDNSJob, now tim
 }
 
 func normalizeAsyncDNSDomain(domain string) string {
-	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(domain)), ".")
+	domain = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(domain)), ".")
+	// Match the classifier's domain-only input contract before creating a job.
+	// Invalid targets keep the existing fallback; they cannot acquire L1 state.
+	if domain == "" || len(domain) > 253 || net.ParseIP(domain) != nil {
+		return ""
+	}
+	for _, label := range strings.Split(domain, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return ""
+		}
+		for _, c := range label {
+			if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+				return ""
+			}
+		}
+	}
+	return domain
 }
 
 func (m *AsyncDNSRouteMatcher) runWorker() {
@@ -570,7 +588,7 @@ func (m *AsyncDNSRouteMatcher) runScheduler() {
 			m.mu.Unlock()
 			if !now.Before(nextStats) {
 				s := m.Stats()
-				errors.LogInfo(m.ctx, "async DNS route stats matcherID=", s.MatcherID,
+				errors.LogInfoPriority(m.ctx, "async DNS route stats matcherID=", s.MatcherID,
 					" entries=", s.Entries, " jobs=", s.Jobs, " queued=", s.Queued,
 					" capacity=", m.cacheCapacity, " queueCapacity=", cap(m.queue), " graceMillis=", m.staleGrace.Milliseconds(),
 					" freshHits=", s.FreshHits, " staleHits=", s.StaleHits, " misses=", s.Misses,
@@ -583,7 +601,27 @@ func (m *AsyncDNSRouteMatcher) runScheduler() {
 					" inheritedEntries=", s.InheritedEntries, " inheritedJobs=", s.InheritedJobs,
 					" routeWaitMillis=", m.routeWait.Milliseconds(), " waiters=", s.Waiters, " waitStarts=", s.WaitStarts,
 					" waitDrops=", s.WaitDrops, " waitTimeouts=", s.WaitTimeouts, " expirations=", s.Expirations,
-					" snapshotWrites=", s.SnapshotWrites, " snapshotErrors=", s.SnapshotErrors, " restoredEntries=", s.RestoredEntries)
+					" snapshotWrites=", s.SnapshotWrites, " snapshotErrors=", s.SnapshotErrors, " restoredEntries=", s.RestoredEntries,
+					" poolSize=", s.PoolSize, " poolAttempts=", s.PoolAttempts, " poolFailovers=", s.PoolFailovers, " poolCooldownSkips=", s.PoolCooldownSkips, " poolSyntheticCooldown=", s.PoolSyntheticCooldown)
+				if m.pool != nil {
+					samples, discarded := m.pool.failureSamples.take()
+					for _, sample := range samples {
+						errors.LogInfo(m.ctx, "async DNS pool failed job matcherID=", s.MatcherID, " sample=", sample)
+					}
+					if discarded > 0 {
+						errors.LogInfo(m.ctx, "async DNS pool failed jobs discarded matcherID=", s.MatcherID, " count=", discarded)
+					}
+					for i, endpoint := range m.pool.endpointStats() {
+						errors.LogInfoPriority(m.ctx, endpoint.logLine(s.MatcherID, i))
+						samples, discarded := m.pool.states[i].metrics.trace.takeErrorSamples()
+						for _, sample := range samples {
+							errors.LogInfo(m.ctx, sample.logLine(s.MatcherID, i))
+						}
+						if discarded > 0 {
+							errors.LogInfo(m.ctx, "async DNS HTTP error samples discarded matcher=", s.MatcherID, " endpointIndex=", i, " count=", discarded)
+						}
+					}
+				}
 				nextStats = now.Add(time.Minute)
 			}
 		}
@@ -872,7 +910,12 @@ func (m *AsyncDNSRouteMatcher) fetchContext(ctx context.Context, domain string) 
 	return m.fetchEndpoint(ctx, m.endpoint, domain)
 }
 
-func (m *AsyncDNSRouteMatcher) fetchEndpoint(ctx context.Context, endpoint, domain string) (*asyncDNSClassifierResponse, error) {
+func (m *AsyncDNSRouteMatcher) fetchEndpoint(ctx context.Context, endpoint, domain string) (result *asyncDNSClassifierResponse, fetchErr error) {
+	trace := m.newHTTPAttemptTrace(endpoint)
+	if trace != nil {
+		trace.diagnostic, _ = ctx.Value(asyncDNSPoolTraceKey{}).(*asyncDNSPoolTraceSample)
+	}
+	defer func() { trace.finish(fetchErr) }()
 	body, err := json.Marshal(asyncDNSClassifierRequest{Domain: domain, AllowStale: m.staleGrace > 0})
 	if err != nil {
 		return nil, &asyncDNSFetchError{kind: asyncDNSFailureRequest, err: err}
@@ -888,6 +931,7 @@ func (m *AsyncDNSRouteMatcher) fetchEndpoint(ctx context.Context, endpoint, doma
 		}
 		req.Header.Set("Authorization", "Bearer "+m.bearerToken)
 	}
+	req = trace.request(req)
 	response, err := m.client.Do(req)
 	if err != nil {
 		return nil, &asyncDNSFetchError{kind: asyncDNSFailureTransport, err: err}
@@ -897,6 +941,7 @@ func (m *AsyncDNSRouteMatcher) fetchEndpoint(ctx context.Context, endpoint, doma
 		return nil, &asyncDNSFetchError{kind: asyncDNSFailureHTTP, statusCode: response.StatusCode, err: errors.New("async DNS route classifier returned status ", response.StatusCode)}
 	}
 
+	trace.phase(asyncDNSHTTPBody)
 	data, err := io.ReadAll(io.LimitReader(response.Body, 32*1024+1))
 	if err != nil {
 		return nil, &asyncDNSFetchError{kind: asyncDNSFailureTransport, err: err}
@@ -904,10 +949,12 @@ func (m *AsyncDNSRouteMatcher) fetchEndpoint(ctx context.Context, endpoint, doma
 	if len(data) > 32*1024 {
 		return nil, &asyncDNSFetchError{kind: asyncDNSFailureInvalidResponse, err: errors.New("async DNS classifier response exceeds 32 KiB")}
 	}
+	trace.phase(asyncDNSHTTPDecode)
 	decoded := new(asyncDNSClassifierResponse)
 	if err := json.Unmarshal(data, decoded); err != nil {
 		return nil, &asyncDNSFetchError{kind: asyncDNSFailureInvalidResponse, err: err}
 	}
+	trace.phase(asyncDNSHTTPComplete)
 	return decoded, nil
 }
 
