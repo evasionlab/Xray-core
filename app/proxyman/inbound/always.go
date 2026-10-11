@@ -96,6 +96,10 @@ func NewAlwaysOnInboundHandler(ctx context.Context, tag string, receiverConfig *
 		return nil, err
 	}
 
+	// The outer/mux dispatcher is not required to forward optional features.
+	// Capture the lifecycle owner from this Instance's installed dispatcher.
+	lifecycle, _ := installed.(routing.InboundSessionLifecycle)
+
 	uplinkCounter, downlinkCounter := getStatCounter(core.MustFromContext(ctx), tag)
 
 	nl := p.Network()
@@ -124,6 +128,7 @@ func NewAlwaysOnInboundHandler(ctx context.Context, tag string, receiverConfig *
 				stream:          mss,
 				tag:             tag,
 				dispatcher:      dispatcher,
+				lifecycle:       lifecycle,
 				sniffingRequest: sniffingRequest,
 				uplinkCounter:   uplinkCounter,
 				downlinkCounter: downlinkCounter,
@@ -146,6 +151,7 @@ func NewAlwaysOnInboundHandler(ctx context.Context, tag string, receiverConfig *
 						recvOrigDest:    receiverConfig.ReceiveOriginalDestination,
 						tag:             tag,
 						dispatcher:      dispatcher,
+						lifecycle:       lifecycle,
 						sniffingRequest: sniffingRequest,
 						uplinkCounter:   uplinkCounter,
 						downlinkCounter: downlinkCounter,

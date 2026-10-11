@@ -28,6 +28,20 @@ func WrapInboundDispatcher(installed, inner Dispatcher) (Dispatcher, error) {
 	return inner, nil
 }
 
+// InboundSessionLifecycle is an optional per-Instance stream lifecycle hook.
+// Begin runs after Core installs Inbound{Tag, Conn}, before proxy authentication.
+// A consumer may lazily admit the authenticated parent on its first dispatch.
+// Core defers end until Process returns (including errors); the hook must return
+// a nonnil context and cleanup. Native datagram workers are outside this scope.
+// The default dispatcher does not implement this interface.
+//
+// The returned context must retain Core's existing inbound/content state. This
+// hook grants no authentication by itself and must not admit unauthenticated
+// connections merely because Begin was called.
+type InboundSessionLifecycle interface {
+	BeginInboundSession(context.Context) (context.Context, func())
+}
+
 // Dispatcher is a feature that dispatches inbound requests to outbound handlers based on rules.
 // Dispatcher is required to be registered in a Xray instance to make Xray function properly.
 //

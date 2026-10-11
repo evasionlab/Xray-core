@@ -42,6 +42,7 @@ type tcpWorker struct {
 	recvOrigDest    bool
 	tag             string
 	dispatcher      routing.Dispatcher
+	lifecycle       routing.InboundSessionLifecycle
 	sniffingRequest session.SniffingRequest
 	uplinkCounter   stats.Counter
 	downlinkCounter stats.Counter
@@ -120,11 +121,27 @@ func (w *tcpWorker) callback(conn stat.Connection) {
 	content.SniffingRequest = w.sniffingRequest
 	ctx = session.ContextWithContent(ctx, content)
 
-	if err := w.proxy.Process(ctx, net.Network_TCP, conn, w.dispatcher); err != nil {
+	if err := processStreamInbound(ctx, net.Network_TCP, conn, w.proxy, w.dispatcher, w.lifecycle); err != nil {
 		errors.LogInfoInner(ctx, err, "connection ends")
 	}
 	cancel()
 	conn.Close()
+}
+
+// Scope cleanup is tied to Process, not a child ray or a guessed idle timeout.
+// Keep this wrapper local so ordinary Core dispatchers take the original path.
+func processStreamInbound(ctx context.Context, network net.Network, conn stat.Connection, p proxy.Inbound, dispatcher routing.Dispatcher, lifecycle routing.InboundSessionLifecycle) error {
+	if lifecycle == nil {
+		return p.Process(ctx, network, conn, dispatcher)
+	}
+	scoped, end := lifecycle.BeginInboundSession(ctx)
+	if end != nil {
+		defer end()
+	}
+	if scoped == nil || end == nil {
+		return errors.New("invalid inbound session lifecycle")
+	}
+	return p.Process(scoped, network, conn, dispatcher)
 }
 
 func (w *tcpWorker) Proxy() proxy.Inbound {
@@ -472,6 +489,7 @@ type dsWorker struct {
 	stream          *internet.MemoryStreamConfig
 	tag             string
 	dispatcher      routing.Dispatcher
+	lifecycle       routing.InboundSessionLifecycle
 	sniffingRequest session.SniffingRequest
 	uplinkCounter   stats.Counter
 	downlinkCounter stats.Counter
@@ -505,7 +523,7 @@ func (w *dsWorker) callback(conn stat.Connection) {
 	content.SniffingRequest = w.sniffingRequest
 	ctx = session.ContextWithContent(ctx, content)
 
-	if err := w.proxy.Process(ctx, net.Network_UNIX, conn, w.dispatcher); err != nil {
+	if err := processStreamInbound(ctx, net.Network_UNIX, conn, w.proxy, w.dispatcher, w.lifecycle); err != nil {
 		errors.LogInfoInner(ctx, err, "connection ends")
 	}
 	cancel()
