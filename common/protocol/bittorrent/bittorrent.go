@@ -1,10 +1,12 @@
 package bittorrent
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 
 	"github.com/xtls/xray-core/common"
+	"github.com/xtls/xray-core/common/protocol"
 )
 
 type SniffHeader struct{}
@@ -20,14 +22,19 @@ func (h *SniffHeader) Domain() string {
 var errNotBittorrent = errors.New("not bittorrent header")
 
 func SniffBittorrent(b []byte) (*SniffHeader, error) {
-	if len(b) < 20 {
+	header := []byte("\x13BitTorrent protocol")
+	if len(b) == 0 {
 		return nil, common.ErrNoClue
 	}
-
-	if b[0] == 19 && string(b[1:20]) == "BitTorrent protocol" {
+	if len(b) < len(header) {
+		if bytes.Equal(b, header[:len(b)]) {
+			return nil, protocol.ErrProtoNeedMoreData
+		}
+		return nil, errNotBittorrent
+	}
+	if bytes.Equal(b[:len(header)], header) {
 		return &SniffHeader{}, nil
 	}
-
 	return nil, errNotBittorrent
 }
 
