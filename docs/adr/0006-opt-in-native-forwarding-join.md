@@ -43,7 +43,11 @@ final rules сохраняются; loopback test allowance не меняет de
 на этом instance до Start, во время работы и после closure. Guards используют
 constructor-captured instance context, а не выбранный caller context. Dispatcher
 также требует exact owner и уже зарегистрированный native-parent lineage до
-allocations/dispatch. Обычные nil-owner managers/dispatchers не меняются.
+allocations/dispatch. Прямой native outbound handler Dispatch также получает
+actual child admission до Process/dial; Dial требует private marker именно этого
+живого admitted Dispatch. Caller owner-carrying context без marker не заменяет
+его authority. Cleanup links происходит до Done. Обычные nil-owner
+managers/dispatchers/handlers не меняются.
 
 Listener loop, accepted transport delivery, native parent, dispatch worker и
 каждая выбранная copy регистрируются **до go/Start effect**. Startup token

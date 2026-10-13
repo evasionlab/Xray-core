@@ -670,3 +670,47 @@ func TestForwardingDrainNativeFreedomRequestSiblingHeld(t *testing.T) {
 		t.Fatalf("native request join %+v %v", r, e)
 	}
 }
+
+func TestForwardingDrainDirectHandlerRequiresItsAdmittedDispatch(t *testing.T) {
+	cfg, _, _ := drainConfig(t)
+	s, d, e := core.NewWithForwardingDrain(context.Background(), cfg, drainOptions())
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer s.Close()
+	defer d.CloseAndJoin(context.Background())
+	h := s.GetFeature(outbound.ManagerType()).(outbound.Manager).GetDefaultHandler()
+	dialer := h.(internet.Dialer)
+	ownCtx := forwardingdrain.ListenerContext(core.ForwardingDrainTestContext(s), "first")
+	own, e := forwardingdrain.Root(ownCtx, true)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer own.Done()
+	foreign, e := forwardingdrain.New([]string{"first"}, forwardingdrain.Limits{MaxParents: 8, MaxTasks: 64})
+	if e != nil {
+		t.Fatal(e)
+	}
+	foreignCtx := forwardingdrain.ListenerContext(forwardingdrain.WithOwner(context.Background(), foreign), "first")
+	other, e := forwardingdrain.Root(foreignCtx, true)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer other.Done()
+	target := xnet.TCPDestination(xnet.LocalHostIP, 1)
+	for _, ctx := range []context.Context{context.Background(), core.ForwardingDrainTestContext(s), other.Context(foreignCtx)} {
+		reader, write := pipe.New(pipe.WithSizeLimit(64))
+		defer write.Close()
+		h.Dispatch(ctx, &transport.Link{Reader: reader, Writer: buf.Discard})
+		if _, e := reader.ReadMultiBuffer(); e == nil {
+			t.Fatal("rejected direct dispatch did not clean supplied link")
+		}
+		if conn, e := dialer.Dial(ctx, target); e == nil || conn != nil {
+			t.Fatal("unowned direct native dial")
+		}
+	}
+	// Even a current same-owner parent is not the handler's admitted Dispatch.
+	if conn, e := dialer.Dial(own.Context(ownCtx), target); e == nil || conn != nil {
+		t.Fatal("parent context impersonated native handler Dispatch")
+	}
+}

@@ -159,8 +159,16 @@ func (o *Owner) acquire(ctx context.Context, parent bool, root bool, resources [
 		}
 	} else {
 		p, _ := ctx.Value(tokenKey{}).(*Token)
-		if p == nil || p.owner != o || p.done || p.finishing {
+		if p == nil {
 			return nil, ErrAuthority
+		}
+		for ancestor := p; ancestor != nil; ancestor = ancestor.parentToken {
+			if ancestor.owner != o || ancestor.done || ancestor.finishing {
+				return nil, ErrAuthority
+			}
+			if _, ok := o.entries[ancestor]; !ok {
+				return nil, ErrAuthority
+			}
 		}
 	}
 	if (parent && o.parents >= o.limits.MaxParents) || (!parent && o.tasks >= o.limits.MaxTasks) {
