@@ -17,6 +17,7 @@ func (*dispatcher) Close() error      { return nil }
 func (*dispatcher) Dispatch(context.Context, net.Destination) (*transport.Link, error) {
 	return nil, nil
 }
+
 func (d *dispatcher) DispatchLink(context.Context, net.Destination, *transport.Link) error {
 	d.calls++
 	return nil
@@ -37,10 +38,12 @@ func (w *wrapped) WrapInboundDispatcher(inner routing.Dispatcher) routing.Dispat
 	}
 	return w
 }
+
 func (w *wrapped) DispatchLink(ctx context.Context, dest net.Destination, link *transport.Link) error {
 	w.calls++
 	return w.inner.DispatchLink(ctx, dest, link)
 }
+
 func TestInboundWrapperIsPerInstanceAndDelegatesMuxParent(t *testing.T) {
 	inner := new(dispatcher)
 	plain := new(dispatcher)
