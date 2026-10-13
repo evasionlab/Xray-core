@@ -15,6 +15,7 @@ import (
 
 // Manager is to manage all outbound handlers.
 type Manager struct {
+	authority        context.Context
 	access           sync.RWMutex
 	defaultHandler   outbound.Handler
 	taggedHandler    map[string]outbound.Handler
@@ -26,6 +27,7 @@ type Manager struct {
 // New creates a new Manager.
 func New(ctx context.Context, config *proxyman.OutboundConfig) (*Manager, error) {
 	m := &Manager{
+		authority:     ctx,
 		taggedHandler: make(map[string]outbound.Handler),
 		tagsCache:     &sync.Map{},
 	}
@@ -101,6 +103,9 @@ func (m *Manager) GetHandler(tag string) outbound.Handler {
 
 // AddHandler implements outbound.Manager.
 func (m *Manager) AddHandler(ctx context.Context, handler outbound.Handler) error {
+	if err := core.ValidateForwardingGraphMutation(m.authority); err != nil {
+		return err
+	}
 	m.access.Lock()
 	defer m.access.Unlock()
 
@@ -129,6 +134,9 @@ func (m *Manager) AddHandler(ctx context.Context, handler outbound.Handler) erro
 
 // RemoveHandler implements outbound.Manager.
 func (m *Manager) RemoveHandler(ctx context.Context, tag string) error {
+	if err := core.ValidateForwardingGraphMutation(m.authority); err != nil {
+		return err
+	}
 	if tag == "" {
 		return common.ErrNoClue
 	}

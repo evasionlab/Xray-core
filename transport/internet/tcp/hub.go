@@ -10,6 +10,7 @@ import (
 	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/common/net"
+	"github.com/xtls/xray-core/internal/forwardingdrain"
 	"github.com/xtls/xray-core/transport/internet"
 	"github.com/xtls/xray-core/transport/internet/reality"
 	"github.com/xtls/xray-core/transport/internet/stat"
@@ -24,6 +25,8 @@ type Listener struct {
 	authConfig    internet.ConnectionAuthenticator
 	config        *Config
 	addConn       internet.ConnHandler
+	drainCtx      context.Context
+	drainLoop     *forwardingdrain.Token
 }
 
 // ListenTCP creates a new Listener based on configurations.
@@ -91,11 +94,21 @@ func ListenTCP(ctx context.Context, address net.Address, port net.Port, streamSe
 		l.authConfig = auth
 	}
 
+	if forwardingdrain.FromContext(ctx) != nil {
+		token, err := forwardingdrain.Root(ctx, false, l)
+		if err != nil {
+			listener.Close()
+			return nil, err
+		}
+		l.drainLoop = token
+		l.drainCtx = token.Context(ctx)
+	}
 	go l.keepAccepting()
 	return l, nil
 }
 
 func (v *Listener) keepAccepting() {
+	defer v.drainLoop.Done()
 	for {
 		conn, err := v.listener.Accept()
 		if err != nil {
@@ -110,7 +123,19 @@ func (v *Listener) keepAccepting() {
 			continue
 		}
 
+		var delivery *forwardingdrain.Token
+		rawConn := conn
+		if v.drainLoop != nil {
+			var err error
+			delivery, err = forwardingdrain.Child(v.drainCtx, rawConn)
+			if err != nil {
+				rawConn.Close()
+				continue
+			}
+		}
 		go func() {
+			defer delivery.Done()
+
 			if v.tlsConfig != nil {
 				conn = tls.Server(conn, v.tlsConfig)
 			} else if v.realityConfig != nil {
@@ -121,6 +146,9 @@ func (v *Listener) keepAccepting() {
 			}
 			if v.authConfig != nil {
 				conn = v.authConfig.Server(conn)
+			}
+			if delivery != nil {
+				conn = &forwardingdrain.Connection{Conn: conn, Ctx: delivery.Context(v.drainCtx), Raw: rawConn}
 			}
 			v.addConn(stat.Connection(conn))
 		}()

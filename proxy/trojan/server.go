@@ -21,6 +21,7 @@ import (
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/policy"
 	"github.com/xtls/xray-core/features/routing"
+	"github.com/xtls/xray-core/internal/forwardingdrain"
 	"github.com/xtls/xray-core/transport/internet/reality"
 	"github.com/xtls/xray-core/transport/internet/stat"
 	"github.com/xtls/xray-core/transport/internet/tls"
@@ -263,6 +264,9 @@ func (s *Server) handleUDPPayload(ctx context.Context, sessionPolicy policy.Sess
 		}
 	})
 	defer udpServer.RemoveRay()
+	if forwardingdrain.FromContext(ctx) != nil {
+		defer udpServer.CloseAndJoin(forwardingdrain.RawConnection(session.InboundFromContext(ctx).Conn))
+	}
 
 	inbound := session.InboundFromContext(ctx)
 	user := inbound.User
@@ -314,6 +318,9 @@ func (s *Server) handleUDPPayload(ctx context.Context, sessionPolicy policy.Sess
 		}
 	}
 
+	if forwardingdrain.FromContext(ctx) != nil {
+		return forwardingdrain.RunJoined(ctx, []any{forwardingdrain.RawConnection(session.InboundFromContext(ctx).Conn)}, requestDone)
+	}
 	if err := task.Run(ctx, requestDone); err != nil {
 		return err
 	}
@@ -327,6 +334,9 @@ func (s *Server) handleConnection(ctx context.Context, sessionPolicy policy.Sess
 ) error {
 	ctx, cancel := context.WithCancel(ctx)
 	timer := signal.CancelAfterInactivity(ctx, cancel, sessionPolicy.Timeouts.ConnectionIdle)
+	if forwardingdrain.FromContext(ctx) != nil {
+		defer timer.SetTimeout(0)
+	}
 	ctx = policy.ContextWithBufferPolicy(ctx, sessionPolicy.Buffer)
 
 	link, err := dispatcher.Dispatch(ctx, destination)
@@ -352,6 +362,10 @@ func (s *Server) handleConnection(ctx context.Context, sessionPolicy policy.Sess
 	}
 
 	requestDonePost := task.OnSuccess(requestDone, task.Close(link.Writer))
+	if forwardingdrain.FromContext(ctx) != nil {
+		defer cancel()
+		return forwardingdrain.RunJoined(ctx, []any{forwardingdrain.RawConnection(session.InboundFromContext(ctx).Conn), link.Reader, link.Writer}, requestDonePost, responseDone)
+	}
 	if err := task.Run(ctx, requestDonePost, responseDone); err != nil {
 		common.Must(common.Interrupt(link.Reader))
 		common.Must(common.Interrupt(link.Writer))

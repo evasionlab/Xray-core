@@ -20,6 +20,7 @@ import (
 	"github.com/xtls/xray-core/features/routing"
 	routing_session "github.com/xtls/xray-core/features/routing/session"
 	"github.com/xtls/xray-core/features/stats"
+	"github.com/xtls/xray-core/internal/forwardingdrain"
 	"github.com/xtls/xray-core/transport"
 	"github.com/xtls/xray-core/transport/pipe"
 )
@@ -93,16 +94,17 @@ func (r *cachedReader) Interrupt() {
 
 // DefaultDispatcher is a default implementation of Dispatcher.
 type DefaultDispatcher struct {
-	ohm    outbound.Manager
-	router routing.Router
-	policy policy.Manager
-	stats  stats.Manager
-	fdns   dns.FakeDNSEngine
+	forwardingOwner *forwardingdrain.Owner
+	ohm             outbound.Manager
+	router          routing.Router
+	policy          policy.Manager
+	stats           stats.Manager
+	fdns            dns.FakeDNSEngine
 }
 
 func init() {
 	common.Must(common.RegisterConfig((*Config)(nil), func(ctx context.Context, config interface{}) (interface{}, error) {
-		d := new(DefaultDispatcher)
+		d := &DefaultDispatcher{forwardingOwner: forwardingdrain.FromContext(ctx)}
 		if err := core.RequireFeatures(ctx, func(om outbound.Manager, router routing.Router, pm policy.Manager, sm stats.Manager, dc dns.Client) error {
 			core.OptionalFeatures(ctx, func(fdns dns.FakeDNSEngine) {
 				d.fdns = fdns
@@ -265,6 +267,19 @@ func (d *DefaultDispatcher) shouldOverride(ctx context.Context, result SniffResu
 
 // Dispatch implements routing.Dispatcher.
 func (d *DefaultDispatcher) Dispatch(ctx context.Context, destination net.Destination) (*transport.Link, error) {
+	if d.forwardingOwner != forwardingdrain.FromContext(ctx) {
+		return nil, forwardingdrain.ErrAuthority
+	}
+	if d.forwardingOwner != nil {
+		if err := d.forwardingOwner.CheckParent(ctx); err != nil {
+			return nil, err
+		}
+	}
+	if forwardingdrain.FromContext(ctx) != nil {
+		if !destination.IsValid() || !destination.Address.Family().IsIP() || session.TimeoutOnlyFromContext(ctx) {
+			return nil, forwardingdrain.ErrUnsupported
+		}
+	}
 	if !destination.IsValid() {
 		panic("Dispatcher: Invalid destination.")
 	}
@@ -284,7 +299,20 @@ func (d *DefaultDispatcher) Dispatch(ctx context.Context, destination net.Destin
 
 	sniffingRequest := content.SniffingRequest
 	inbound, outbound := d.getLink(ctx)
-	if !sniffingRequest.Enabled {
+	if forwardingdrain.FromContext(ctx) != nil {
+		if sniffingRequest.Enabled {
+			common.Interrupt(inbound.Reader)
+			common.Interrupt(outbound.Writer)
+			return nil, forwardingdrain.ErrUnsupported
+		}
+		child, err := forwardingdrain.Child(ctx, inbound.Reader, inbound.Writer, outbound.Reader, outbound.Writer)
+		if err != nil {
+			common.Interrupt(outbound.Reader)
+			common.Interrupt(outbound.Writer)
+			return nil, err
+		}
+		go func() { defer child.Done(); d.routedDispatch(child.Context(ctx), outbound, destination) }()
+	} else if !sniffingRequest.Enabled {
 		go d.routedDispatch(ctx, outbound, destination)
 	} else {
 		go func() {
@@ -322,6 +350,29 @@ func (d *DefaultDispatcher) Dispatch(ctx context.Context, destination net.Destin
 
 // DispatchLink implements routing.Dispatcher.
 func (d *DefaultDispatcher) DispatchLink(ctx context.Context, destination net.Destination, outbound *transport.Link) error {
+	if d.forwardingOwner != forwardingdrain.FromContext(ctx) {
+		return forwardingdrain.ErrAuthority
+	}
+	if d.forwardingOwner != nil {
+		if err := d.forwardingOwner.CheckParent(ctx); err != nil {
+			return err
+		}
+	}
+	if forwardingdrain.FromContext(ctx) != nil {
+		if !destination.IsValid() || !destination.Address.Family().IsIP() || session.TimeoutOnlyFromContext(ctx) {
+			return forwardingdrain.ErrUnsupported
+		}
+		child, err := forwardingdrain.Child(ctx, outbound.Reader, outbound.Writer)
+		if err != nil {
+			return err
+		}
+		defer child.Done()
+		ctx = child.Context(ctx)
+		if content := session.ContentFromContext(ctx); content != nil && content.SniffingRequest.Enabled {
+			return forwardingdrain.ErrUnsupported
+		}
+	}
+
 	if !destination.IsValid() {
 		return errors.New("Dispatcher: Invalid destination.")
 	}

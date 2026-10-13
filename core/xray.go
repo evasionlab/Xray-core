@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"sync"
+	"sync/atomic"
 
 	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/errors"
@@ -17,6 +18,7 @@ import (
 	"github.com/xtls/xray-core/features/policy"
 	"github.com/xtls/xray-core/features/routing"
 	"github.com/xtls/xray-core/features/stats"
+	"github.com/xtls/xray-core/internal/forwardingdrain"
 	"github.com/xtls/xray-core/transport/internet"
 )
 
@@ -80,6 +82,9 @@ func (r *resolution) callbackResolution(allFeatures []features.Feature) error {
 
 // Instance combines all Xray features.
 type Instance struct {
+	forwardingDrain            *forwardingdrain.Owner
+	forwardingInitialized      atomic.Bool
+	forwardingConfig           *Config
 	statusLock                 sync.Mutex
 	features                   []features.Feature
 	pendingResolutions         []resolution
@@ -259,6 +264,9 @@ func (s *Instance) Type() interface{} {
 
 // Close shutdown the Xray instance.
 func (s *Instance) Close() error {
+	if s.forwardingDrain != nil {
+		s.forwardingDrain.Seal()
+	}
 	s.statusLock.Lock()
 	defer s.statusLock.Unlock()
 
@@ -320,6 +328,9 @@ func (s *Instance) RequireFeatures(callback interface{}, optional bool) error {
 
 // AddFeature registers a feature into current Instance.
 func (s *Instance) AddFeature(feature features.Feature) error {
+	if s.forwardingDrain != nil && s.forwardingInitialized.Load() {
+		return ErrForwardingGraphUnsupported
+	}
 	if s.running {
 		if err := feature.Start(); err != nil {
 			errors.LogInfoInner(s.ctx, err, "failed to start feature")
@@ -385,11 +396,32 @@ func (s *Instance) GetFeature(featureType interface{}) features.Feature {
 //
 // xray:api:stable
 func (s *Instance) Start() error {
+	// The startup token is registered before waiting the lifecycle lock or
+	// invoking native Start. Seal never waits this lock; Join owns and waits any
+	// already-admitted startup and respects its caller's deadline.
+	if s.forwardingDrain != nil {
+		ctx := forwardingdrain.ListenerContext(s.ctx, s.forwardingConfig.Inbound[0].Tag)
+		startup, err := forwardingdrain.Root(ctx, false)
+		if err != nil {
+			return err
+		}
+		defer startup.Done()
+	}
 	s.statusLock.Lock()
 	defer s.statusLock.Unlock()
+	if s.forwardingDrain != nil {
+		if err := s.forwardingDrain.CheckOpen(); err != nil {
+			return err
+		}
+	}
 
 	s.running = true
 	for _, f := range s.features {
+		if s.forwardingDrain != nil {
+			if err := s.forwardingDrain.CheckOpen(); err != nil {
+				return err
+			}
+		}
 		if err := f.Start(); err != nil {
 			return err
 		}
