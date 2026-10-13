@@ -396,14 +396,16 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 		defer timer.SetTimeout(plcy.Timeouts.DownlinkOnly)
 
 		var writer buf.Writer
+		var fragmentWriter *FragmentWriter
 		if destination.Network == net.Network_TCP {
 			if h.config.Fragment != nil {
 				errors.LogDebug(ctx, "FRAGMENT", h.config.Fragment.PacketsFrom, h.config.Fragment.PacketsTo, h.config.Fragment.LengthMin, h.config.Fragment.LengthMax,
 					h.config.Fragment.IntervalMin, h.config.Fragment.IntervalMax, h.config.Fragment.MaxSplitMin, h.config.Fragment.MaxSplitMax)
-				writer = buf.NewWriter(&FragmentWriter{
+				fragmentWriter = &FragmentWriter{
 					fragment: h.config.Fragment,
 					writer:   conn,
-				})
+				}
+				writer = buf.NewWriter(fragmentWriter)
 			} else {
 				writer = buf.NewWriter(conn)
 			}
@@ -425,6 +427,11 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 			return errors.New("failed to process request").Base(err)
 		}
 
+		if fragmentWriter != nil {
+			if err := fragmentWriter.Flush(); err != nil {
+				return errors.New("failed to flush request").Base(err)
+			}
+		}
 		return nil
 	}
 
@@ -716,69 +723,43 @@ func (w *NoisePacketWriter) WriteMultiBuffer(mb buf.MultiBuffer) error {
 	return w.Writer.WriteMultiBuffer(mb)
 }
 
+// TLS plaintext handshake records have a maximum payload of 2^14 bytes.
+const maxTLSHandshakeRecord = 16384
+
 type FragmentWriter struct {
-	fragment *Fragment
-	writer   io.Writer
-	count    uint64
+	fragment   *Fragment
+	writer     io.Writer
+	count      uint64
+	tlsPending []byte
+	tlsDone    bool
+}
+
+// Flush forwards an incomplete first record when the request reaches EOF.
+// The request copy must succeed before flushing; failed connections discard it.
+func (f *FragmentWriter) Flush() error {
+	pending := f.tlsPending
+	f.tlsPending = nil
+	f.tlsDone = true
+	if len(pending) == 0 {
+		return nil
+	}
+	_, err := f.writeFull(pending)
+	return err
+}
+
+func (f *FragmentWriter) writeFull(b []byte) (int, error) {
+	n, err := f.writer.Write(b)
+	if err == nil && n != len(b) {
+		err = io.ErrShortWrite
+	}
+	return n, err
 }
 
 func (f *FragmentWriter) Write(b []byte) (int, error) {
-	f.count++
-
 	if f.fragment.PacketsFrom == 0 && f.fragment.PacketsTo == 1 {
-		if f.count != 1 || len(b) <= 5 || b[0] != 22 {
-			return f.writer.Write(b)
-		}
-		recordLen := 5 + ((int(b[3]) << 8) | int(b[4]))
-		if len(b) < recordLen { // maybe already fragmented somehow
-			return f.writer.Write(b)
-		}
-		data := b[5:recordLen]
-		buff := make([]byte, 2048)
-		var hello []byte
-		maxSplit := crypto.RandBetween(int64(f.fragment.MaxSplitMin), int64(f.fragment.MaxSplitMax))
-		var splitNum int64
-		for from := 0; ; {
-			to := from + int(crypto.RandBetween(int64(f.fragment.LengthMin), int64(f.fragment.LengthMax)))
-			splitNum++
-			if to > len(data) || (maxSplit > 0 && splitNum >= maxSplit) {
-				to = len(data)
-			}
-			l := to - from
-			if 5+l > len(buff) {
-				buff = make([]byte, 5+l)
-			}
-			copy(buff[:3], b)
-			copy(buff[5:], data[from:to])
-			from = to
-			buff[3] = byte(l >> 8)
-			buff[4] = byte(l)
-			if f.fragment.IntervalMax == 0 { // combine fragmented tlshello if interval is 0
-				hello = append(hello, buff[:5+l]...)
-			} else {
-				_, err := f.writer.Write(buff[:5+l])
-				time.Sleep(time.Duration(crypto.RandBetween(int64(f.fragment.IntervalMin), int64(f.fragment.IntervalMax))) * time.Millisecond)
-				if err != nil {
-					return 0, err
-				}
-			}
-			if from == len(data) {
-				if len(hello) > 0 {
-					_, err := f.writer.Write(hello)
-					if err != nil {
-						return 0, err
-					}
-				}
-				if len(b) > recordLen {
-					n, err := f.writer.Write(b[recordLen:])
-					if err != nil {
-						return recordLen + n, err
-					}
-				}
-				return len(b), nil
-			}
-		}
+		return f.writeTLSHello(b)
 	}
+	f.count++
 
 	if f.fragment.PacketsFrom != 0 && (f.count < f.fragment.PacketsFrom || f.count > f.fragment.PacketsTo) {
 		return f.writer.Write(b)
@@ -799,6 +780,121 @@ func (f *FragmentWriter) Write(b []byte) (int, error) {
 		time.Sleep(time.Duration(crypto.RandBetween(int64(f.fragment.IntervalMin), int64(f.fragment.IntervalMax))) * time.Millisecond)
 		if from >= len(b) {
 			return from, nil
+		}
+	}
+}
+
+// writeTLSHello collects only the first record, independently of transport
+// buffer boundaries. In particular, even its five-byte header may be split.
+func (f *FragmentWriter) writeTLSHello(b []byte) (int, error) {
+	if len(b) == 0 {
+		return 0, nil
+	}
+	if f.tlsDone {
+		return f.writer.Write(b)
+	}
+	previous := len(f.tlsPending)
+	if f.tlsPending == nil {
+		f.tlsPending = make([]byte, 0, 5)
+	}
+	consumed := 0
+	for len(f.tlsPending) < 5 && consumed < len(b) {
+		f.tlsPending = append(f.tlsPending, b[consumed])
+		consumed++
+		header := f.tlsPending
+		if header[0] != 22 || (len(header) >= 2 && header[1] != 3) || (len(header) >= 3 && header[2] > 4) {
+			break
+		}
+	}
+	header := f.tlsPending
+	valid := header[0] == 22 && (len(header) < 2 || header[1] == 3) && (len(header) < 3 || header[2] <= 4)
+	recordLen := 0
+	if valid && len(header) >= 5 {
+		recordLen = 5 + (int(header[3])<<8 | int(header[4]))
+		valid = recordLen > 5 && recordLen <= 5+maxTLSHandshakeRecord
+	}
+	if !valid {
+		f.tlsDone = true
+		pending := f.tlsPending
+		f.tlsPending = nil
+		n, err := f.writeFull(pending)
+		if err != nil {
+			return max(0, n-previous), err
+		}
+		if consumed == len(b) {
+			return consumed, nil
+		}
+		n, err = f.writeFull(b[consumed:])
+		return consumed + n, err
+	}
+	if recordLen == 0 {
+		return len(b), nil
+	}
+	if cap(f.tlsPending) < recordLen {
+		pending := make([]byte, len(f.tlsPending), recordLen)
+		copy(pending, f.tlsPending)
+		f.tlsPending = pending
+	}
+	take := min(recordLen-len(f.tlsPending), len(b)-consumed)
+	f.tlsPending = append(f.tlsPending, b[consumed:consumed+take]...)
+	consumed += take
+	if len(f.tlsPending) < recordLen {
+		return len(b), nil
+	}
+	f.tlsDone = true
+	record := f.tlsPending
+	f.tlsPending = nil
+	n, err := f.writeTLSRecord(record)
+	if err != nil {
+		return min(consumed, max(0, n-previous)), err
+	}
+	if consumed < len(b) {
+		n, err = f.writeFull(b[consumed:])
+		return consumed + n, err
+	}
+	return len(b), nil
+}
+
+func (f *FragmentWriter) writeTLSRecord(record []byte) (int, error) {
+	data := record[5:]
+	buff := make([]byte, 2048)
+	var hello []byte
+	maxSplit := crypto.RandBetween(int64(f.fragment.MaxSplitMin), int64(f.fragment.MaxSplitMax))
+	var splitNum int64
+	for from := 0; ; {
+		to := from + int(crypto.RandBetween(int64(f.fragment.LengthMin), int64(f.fragment.LengthMax)))
+		splitNum++
+		if to > len(data) || (maxSplit > 0 && splitNum >= maxSplit) {
+			to = len(data)
+		}
+		l := to - from
+		if 5+l > len(buff) {
+			buff = make([]byte, 5+l)
+		}
+		copy(buff[:3], record)
+		copy(buff[5:], data[from:to])
+		buff[3] = byte(l >> 8)
+		buff[4] = byte(l)
+		if f.fragment.IntervalMax == 0 { // combine fragmented tlshello if interval is 0
+			hello = append(hello, buff[:5+l]...)
+		} else {
+			_, err := f.writeFull(buff[:5+l])
+			if err != nil {
+				if from == 0 {
+					return 0, err
+				}
+				return 5 + from, err
+			}
+			time.Sleep(time.Duration(crypto.RandBetween(int64(f.fragment.IntervalMin), int64(f.fragment.IntervalMax))) * time.Millisecond)
+		}
+		from = to
+		if from == len(data) {
+			if len(hello) > 0 {
+				if _, err := f.writeFull(hello); err != nil {
+					return 0, err
+				}
+			}
+			return len(record), nil
 		}
 	}
 }
