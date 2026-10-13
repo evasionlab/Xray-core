@@ -17,6 +17,7 @@ import (
 	"github.com/xtls/xray-core/common/task"
 	"github.com/xtls/xray-core/features/routing"
 	"github.com/xtls/xray-core/features/stats"
+	"github.com/xtls/xray-core/internal/forwardingdrain"
 	"github.com/xtls/xray-core/proxy"
 	hysteria_proxy "github.com/xtls/xray-core/proxy/hysteria"
 	"github.com/xtls/xray-core/transport/internet"
@@ -59,8 +60,9 @@ func getTProxyType(s *internet.MemoryStreamConfig) internet.SocketConfig_TProxyM
 	return s.SocketSettings.Tproxy
 }
 
-func (w *tcpWorker) callback(conn stat.Connection) {
-	ctx, cancel := context.WithCancel(w.ctx)
+func (w *tcpWorker) callback(conn stat.Connection) { w.callbackContext(conn, w.ctx) }
+func (w *tcpWorker) callbackContext(conn stat.Connection, ownerCtx context.Context) {
+	ctx, cancel := context.WithCancel(ownerCtx)
 	sid := session.NewID()
 	ctx = c.ContextWithID(ctx, sid)
 
@@ -150,13 +152,36 @@ func (w *tcpWorker) Proxy() proxy.Inbound {
 
 func (w *tcpWorker) Start() error {
 	ctx := context.Background()
+	var setup *forwardingdrain.Token
+	if forwardingdrain.FromContext(w.ctx) != nil {
+		ctx = forwardingdrain.ListenerContext(w.ctx, w.tag)
+		var err error
+		setup, err = forwardingdrain.Root(ctx, false)
+		if err != nil {
+			return err
+		}
+		defer setup.Done()
+	}
 
 	if v, ok := w.proxy.(*hysteria_proxy.Server); ok {
 		ctx = hysteria.ContextWithValidator(ctx, v.HysteriaInboundValidator())
 	}
 
 	hub, err := internet.ListenTCP(ctx, w.address, w.port, w.stream, func(conn stat.Connection) {
-		go w.callback(conn)
+		if forwardingdrain.FromContext(w.ctx) == nil {
+			go w.callback(conn)
+			return
+		}
+		delivered := forwardingdrain.ConnectionContext(conn, w.ctx)
+		parent, err := forwardingdrain.Parent(delivered, forwardingdrain.RawConnection(conn))
+		if err != nil {
+			forwardingdrain.RawConnection(conn).Close()
+			return
+		}
+		defer parent.Done()
+		// The transport already owns this goroutine. Avoid an unregistered
+		// second fork and return only after the real parent plus descendants.
+		w.callbackContext(conn, parent.Context(delivered))
 	})
 	if err != nil {
 		return errors.New("failed to listen TCP on ", w.port).AtWarning().Base(err)
