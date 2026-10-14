@@ -1,6 +1,7 @@
 name: Tests and Checkings
 
 on:
+  workflow_dispatch:
   push:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -97,3 +98,22 @@ jobs:
           enableCrossOsArchive: true
       - name: Test
         run: go test -timeout 1h -v ./...
+
+  runtime-interfaces:
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: Use persistent runner-local Go caches
+        shell: bash
+        run: |
+          printf 'GOCACHE=%s/go-local-cache/%s/build\n' "$RUNNER_TOOL_CACHE" "$GITHUB_REPOSITORY" >> "$GITHUB_ENV"
+          printf 'GOMODCACHE=%s/go-local-cache/%s/modules\n' "$RUNNER_TOOL_CACHE" "$GITHUB_REPOSITORY" >> "$GITHUB_ENV"
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Validate optional runtime interface contracts under races
+        run: go test -count=1 -race ./features/routing ./proxy/vless/inbound ./proxy/trojan
