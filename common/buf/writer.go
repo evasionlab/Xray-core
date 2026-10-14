@@ -37,6 +37,11 @@ func (w *BufferToBytesWriter) WriteMultiBuffer(mb MultiBuffer) error {
 
 	bs := w.cache
 	for _, b := range mb {
+		// Nil slots have no content, as in MultiBuffer.Len and IsEmpty.
+		// They must not become entries in the TCP writev batch.
+		if b == nil {
+			continue
+		}
 		bs = append(bs, b.Bytes())
 	}
 
