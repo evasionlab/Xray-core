@@ -187,6 +187,11 @@ func (s *Server) Process(ctx context.Context, network net.Network, conn stat.Con
 	} else {
 		user = s.validator.Get(hexString(first.BytesTo(56)))
 		if user == nil {
+			// A complete canonical auth prefix was actually refused by the
+			// validator. Malformed CRLF/hash bytes remain protocol failures.
+			if first.Byte(57) == '\n' {
+				routing.NotifyInboundAuthenticationRejected(ctx, dispatcher, "trojan", string(first.BytesTo(56)))
+			}
 			// invalid user, let's fallback
 			err = errors.New("not a valid user")
 			log.Record(&log.AccessMessage{
