@@ -325,6 +325,9 @@ func TestCountryMarkGuardRejectsDialerBypasses(t *testing.T) {
 		if _, err := DialSystem(context.Background(), target, socket); err == nil {
 			t.Fatal("guard routing bypass admitted")
 		}
+		if _, err := new(DefaultSystemDialer).Dial(context.Background(), nil, target, socket); err == nil {
+			t.Fatal("direct system dialer routing bypass admitted")
+		}
 	}
 	original := effectiveSystemDialer
 	UseAlternativeSystemDialer(&SimpleSystemDialer{})

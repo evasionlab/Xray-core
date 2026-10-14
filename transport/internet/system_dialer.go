@@ -50,6 +50,9 @@ func (d *DefaultSystemDialer) Dial(ctx context.Context, src net.Address, dest ne
 	errors.LogDebug(ctx, "dialing to "+dest.String())
 	var country *countryMarkIndex
 	if sockopt != nil && sockopt.CountryMarkGuard != nil {
+		if sockopt.DialerProxy != "" || sockopt.Interface != "" {
+			return nil, errors.New("country mark guard rejects proxy/interface routing bypass")
+		}
 		if dest.Network != net.Network_TCP {
 			return nil, errors.New("country mark guard requires TCP outbound")
 		}
@@ -139,6 +142,9 @@ func (d *DefaultSystemDialer) Dial(ctx context.Context, src net.Address, dest ne
 		dialer.Control = func(network, address string, c syscall.RawConn) error {
 			for _, ctl := range Controllers {
 				if err := ctl(network, address, c); err != nil {
+					if country != nil {
+						return errors.New("country mark guard external socket controller failed")
+					}
 					errors.LogInfoInner(ctx, err, "failed to apply external controller")
 				}
 			}
