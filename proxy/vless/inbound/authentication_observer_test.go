@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"strings"
 	"testing"
 
 	"github.com/xtls/xray-core/common/buf"
@@ -36,6 +37,9 @@ func TestActualHeaderValidatorRejectionObserver(t *testing.T) {
 	ctx := context.WithValue(context.Background(), struct{}{}, "socket")
 	wire := append([]byte{0}, id.Bytes()...)
 	_, _, _, _, e := encoding.DecodeRequestHeader(false, buf.New(), bytes.NewReader(wire), observedValidator{validator, ctx, o})
+	if e == nil || strings.Contains(e.Error(), id.String()) {
+		t.Fatal("rejected credential leaked in error", e)
+	}
 	if e == nil || o.count != 1 || o.ctx != ctx {
 		t.Fatal("missing typed validator verdict", e, o.count)
 	}
