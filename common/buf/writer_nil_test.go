@@ -87,7 +87,7 @@ func TestBufferToBytesWriterEmptyReaderMerge(t *testing.T) {
 		t.Fatal("merge did not transfer source ownership")
 	}
 	var output bytes.Buffer
-	if err := Copy(&nilSlotReader{mb: mb}, NewWriter(&output)); err != nil || output.String() != "payload" {
+	if err := Copy(&nilSlotReader{mb: mb}, &BufferToBytesWriter{Writer: &output}); err != nil || output.String() != "payload" {
 		t.Fatalf("merged copy output=%q err=%v", output.String(), err)
 	}
 }
