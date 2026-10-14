@@ -45,8 +45,9 @@ deadline. `requestTimeoutMillis` ограничивает **всю операц�
 оставшиеся 150 мс: бюджет больше не делится на число healthy/eligible members.
 После быстрого transport failure или HTTP 502/503/504 следующий eligible member
 получает только оставшееся время того же deadline. Отдельных concurrent/hedged
-запросов нет. Pending, ready other, stale и любой неретраибельный HTTP/invalid
-payload завершают операцию; 401/403/429 не вызывают fanout.
+запросов нет. Ready other, stale и любой неретраибельный HTTP/invalid payload завершают
+операцию; 401/403/429 не вызывают fanout. Pending с 2026-10-14 сохраняется как
+fallback до проверки готового sibling в прежнем deadline (ADR-0005).
 
 Если первый member молча завис, он может исчерпать одну фоновую операцию.
 Она завершается ошибкой в общем deadline; retryable timeout записывает passive

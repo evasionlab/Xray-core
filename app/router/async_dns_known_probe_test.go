@@ -81,7 +81,7 @@ func TestAsyncDNSPoolKnownProbeTerminalAndExternalCancel(t *testing.T) {
 		name   string
 		status int
 		body   string
-	}{{"auth", 401, ""}, {"pending", 200, `{"state":"pending","retryAfterMillis":5000}`}} {
+	}{{"auth", 401, ""}} {
 		t.Run(tc.name, func(t *testing.T) {
 			var survivor atomic.Int32
 			m := newAsyncDNSPoolTestMatcher(t, &AsyncDnsRouteConfig{RequestTimeoutMillis: 150}, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(tc.status); io.WriteString(w, tc.body) }, func(w http.ResponseWriter, r *http.Request) { survivor.Add(1); io.WriteString(w, poolReady) })
