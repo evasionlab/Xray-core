@@ -307,7 +307,7 @@ func (h *Handler) Process(ctx context.Context, network net.Network, connection s
 	if isfb && firstLen < 18 {
 		err = errors.New("fallback directly")
 	} else {
-		userSentID, request, requestAddons, isfb, err = encoding.DecodeRequestHeader(isfb, first, reader, h.validator)
+		userSentID, request, requestAddons, isfb, err = encoding.DecodeRequestHeader(isfb, first, reader, withAuthenticationObserver(ctx, h.validator, dispatch))
 	}
 
 	if err != nil {
