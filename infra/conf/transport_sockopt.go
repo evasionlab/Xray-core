@@ -86,8 +86,8 @@ type SocketConfig struct {
 func (c *SocketConfig) Build() (*internet.SocketConfig, error) {
 	var country *internet.CountryMarkGuard
 	if c.CountryMarkGuard != nil {
-		if c.DialerProxy != "" || c.Interface != "" {
-			return nil, errors.New("country mark guard rejects proxy/interface routing bypass")
+		if c.DialerProxy != "" || c.Interface != "" || len(c.CustomSockopt) > 0 || c.TcpMptcp || (c.TProxy != "" && strings.ToLower(c.TProxy) != "off") {
+			return nil, errors.New("country mark guard rejects unsupported socket routing paths")
 		}
 		guard := c.CountryMarkGuard
 		country = &internet.CountryMarkGuard{RuMark: guard.RuMark, NonRuMark: guard.NonRuMark, GeoipFile: guard.GeoIPFile, GeoipSha256: guard.GeoIPSHA256}

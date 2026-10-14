@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -321,7 +322,7 @@ func TestCountryMarkActualAssetBudget(t *testing.T) {
 func TestCountryMarkGuardRejectsDialerBypasses(t *testing.T) {
 	_, cfg := fixtureIndex(t)
 	target := xnet.TCPDestination(xnet.ParseAddress("8.8.8.8"), 443)
-	for _, socket := range []*SocketConfig{{CountryMarkGuard: cfg, DialerProxy: "proxy"}, {CountryMarkGuard: cfg, Interface: "wg0"}} {
+	for _, socket := range []*SocketConfig{{CountryMarkGuard: cfg, DialerProxy: "proxy"}, {CountryMarkGuard: cfg, Interface: "wg0"}, {CountryMarkGuard: cfg, TcpMptcp: true}, {CountryMarkGuard: cfg, CustomSockopt: []*CustomSockopt{{}}}, {CountryMarkGuard: cfg, Tproxy: SocketConfig_TProxy}} {
 		if _, err := DialSystem(context.Background(), target, socket); err == nil {
 			t.Fatal("guard routing bypass admitted")
 		}
@@ -345,5 +346,18 @@ func TestCountryMarkPrefixBoundBeforeObjectDecode(t *testing.T) {
 	}
 	if _, _, err := scanCountryMarkEntry(context.Background(), body); err == nil {
 		t.Fatal("unbounded CIDR graph accepted")
+	}
+}
+
+func TestCountryMarkExternalControllersRejected(t *testing.T) {
+	_, cfg := fixtureIndex(t)
+	original := Controllers
+	Controllers = []func(string, string, syscall.RawConn) error{func(string, string, syscall.RawConn) error {
+		t.Fatal("guard invoked uncontrolled socket controller")
+		return nil
+	}}
+	defer func() { Controllers = original }()
+	if _, err := new(DefaultSystemDialer).Dial(context.Background(), nil, xnet.TCPDestination(xnet.ParseAddress("8.8.8.8"), 443), &SocketConfig{CountryMarkGuard: cfg}); err == nil {
+		t.Fatal("uncontrolled socket callback allowed")
 	}
 }

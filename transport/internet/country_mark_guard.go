@@ -333,3 +333,10 @@ func countryMarkControl(i *countryMarkIndex, c *CountryMarkGuard, network, addre
 	}
 	return nil
 }
+
+func validateCountryMarkSocketPath(c *SocketConfig) error {
+	if c.DialerProxy != "" || c.Interface != "" || len(c.CustomSockopt) > 0 || c.TcpMptcp || c.Tproxy != SocketConfig_Off || len(Controllers) > 0 {
+		return errors.New("country mark guard rejects unsupported socket routing paths")
+	}
+	return nil
+}

@@ -36,7 +36,8 @@ non-RU не доказывает страну IP, который OS DNS выбе
 Поле предназначено для отдельного direct/freedom TCP IPv4 outbound. Оно
 не меняет resolver и global domainStrategy. Отсутствие поля сохраняет прежние
 socket options и поведение UDP. С полем non-Linux, non-TCP, IPv6, dialerProxy,
-interface binding и альтернативный system dialer отвергаются.
+interface binding, custom socket options, MPTCP/TProxy, внешние socket controllers
+и альтернативный system dialer отвергаются.
 
 Обычный GoDialer передаёт своему Control callback фактический literal IP:port
 каждого socket candidate до connect. Guard проверяет именно этот адрес заново

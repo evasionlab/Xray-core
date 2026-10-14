@@ -50,8 +50,8 @@ func (d *DefaultSystemDialer) Dial(ctx context.Context, src net.Address, dest ne
 	errors.LogDebug(ctx, "dialing to "+dest.String())
 	var country *countryMarkIndex
 	if sockopt != nil && sockopt.CountryMarkGuard != nil {
-		if sockopt.DialerProxy != "" || sockopt.Interface != "" {
-			return nil, errors.New("country mark guard rejects proxy/interface routing bypass")
+		if err := validateCountryMarkSocketPath(sockopt); err != nil {
+			return nil, err
 		}
 		if dest.Network != net.Network_TCP {
 			return nil, errors.New("country mark guard requires TCP outbound")
