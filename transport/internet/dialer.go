@@ -224,6 +224,14 @@ func checkAddressPortStrategy(ctx context.Context, dest net.Destination, sockopt
 
 // DialSystem calls system dialer to create a network connection.
 func DialSystem(ctx context.Context, dest net.Destination, sockopt *SocketConfig) (net.Conn, error) {
+	if sockopt != nil && sockopt.CountryMarkGuard != nil {
+		if sockopt.DialerProxy != "" || sockopt.Interface != "" {
+			return nil, errors.New("country mark guard rejects proxy/interface routing bypass")
+		}
+		if _, ok := effectiveSystemDialer.(*DefaultSystemDialer); !ok {
+			return nil, errors.New("country mark guard requires the default socket dialer")
+		}
+	}
 	var src net.Address
 	outbounds := session.OutboundsFromContext(ctx)
 	var outboundName string
