@@ -10,7 +10,6 @@ import (
 	"github.com/xtls/xray-core/common/protocol"
 	"github.com/xtls/xray-core/common/session"
 	"github.com/xtls/xray-core/common/signal"
-	"github.com/xtls/xray-core/common/uuid"
 	"github.com/xtls/xray-core/proxy"
 	"github.com/xtls/xray-core/proxy/vless"
 )
@@ -92,8 +91,7 @@ func DecodeRequestHeader(isfb bool, first *buf.Buffer, reader io.Reader, validat
 		}
 
 		if request.User = validator.Get(id); request.User == nil {
-			u := uuid.UUID(id)
-			return nil, nil, nil, isfb, errors.New("invalid request user id: " + u.String())
+			return nil, nil, nil, isfb, errors.New("invalid request user id")
 		}
 
 		if isfb {
