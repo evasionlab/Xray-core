@@ -115,5 +115,5 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: Validate optional runtime interface contracts under races
-        run: go test -count=1 -race ./features/routing ./proxy/vless/inbound ./proxy/trojan
+      - name: Validate runtime interface and buffer contracts under races
+        run: go test -count=1 -race ./features/routing ./proxy/vless/inbound ./proxy/trojan ./common/buf ./transport/pipe ./proxy/freedom ./proxy/vless/encoding
