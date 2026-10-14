@@ -174,7 +174,6 @@ func TestAsyncDNSPoolStopsFanoutOnAuthoritativeOrNonRetryableResult(t *testing.T
 		status int
 		body   string
 	}{
-		{"pending", 200, `{"state":"pending","retryAfterMillis":5000}`},
 		{"other", 200, `{"state":"ready","route":"other","ttlMillis":5000}`},
 		{"stale", 200, `{"state":"stale","route":"ru","staleTtlMillis":5000}`},
 		{"invalid-json", 200, `{`},

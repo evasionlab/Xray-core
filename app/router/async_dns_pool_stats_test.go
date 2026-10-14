@@ -56,7 +56,6 @@ func TestAsyncDNSPoolAttemptStatsTerminalResultsDoNotFanOut(t *testing.T) {
 		body                   string
 		pending, http, invalid uint64
 	}{
-		{"pending", 200, `{"state":"pending","retryAfterMillis":5000}`, 1, 0, 0},
 		{"auth", 401, "", 0, 1, 0},
 		{"forbidden", 403, "", 0, 1, 0},
 		{"overload", 429, "", 0, 1, 0},

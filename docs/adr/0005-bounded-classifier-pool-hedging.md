@@ -52,7 +52,8 @@ reserve50/remaining/2 удалён: ожидание будущего slot бо�
 Generic six-fast503 fixture остаётся six unique attempts. Default3 scheduling/
 50ms hedge/full parent остаются прежними; namespace/membership не меняются.
 
-Первый valid response — единственный результат job, включая pending/stale/other;
+Первый usable ready/stale response — единственный результат job, включая route other;
+уточнение pending от 2026-10-14 описано ниже.
 authoritative nonretryable auth/terminal error завершает job без retry. Конкуренты
 отменяются и drained до возврата coordinator; buffered channel соответствует
 max6 (фактический размер N). Parent/external cancellation сохраняется. Workers, job/queue admission,
@@ -163,3 +164,42 @@ sink, overflow самой priority queue, выключенном severity/sink �
 при разблокированном writer; production evidence/canary pending. ACK/метрики не
 подделываются, исходные failed captures остаются failed. Owner Core; consumer
 XrayR использует прежний logging protocol. Новых workflows/flags/ADR нет.
+
+
+## Уточнение 2026-10-14: pending не закрывает HA-поиск готового L2
+
+Контекст: на wellserver1 и wellserver7 при повторной потере NetBird пути к Redis
+classifier возвращал HTTP200/pending. Этот wire shape совпадает с cold miss;
+готовый ответ от другой replica с общим canonical L2 при этом мог быть доступен.
+Прежний first-valid-wins останавливал pool на pending и отменял поиск готового
+результата. Сетевой первопричиной HTTP200/pending не является: это отдельное
+усиление пользовательского эффекта отказа одного replica пути.
+
+Решение: coordinator сохраняет первый valid pending как fallback с исходным
+retryAfterMillis и проверяет следующие configured members в том же абсолютном
+request deadline. Если active attempts уже нет, следующий member запускается
+последовательно; если successor завис, действует прежний hedge50/max6. Fast first
+ready/stale по-прежнему требует одну попытку. Первый ready/stale, включая other,
+выигрывает. All-pending возвращает первый pending; own request deadline после
+pending тоже возвращает его, отменяя и draining остальных. External cancellation
+и Close не превращаются в pending. Неретраибельный auth/429/invalid error остаётся
+terminal даже после pending. Pending не получает health penalty и не продлевает
+routeWait, L1/TTL, domain job budget или server-side lease/fill fences.
+
+Цена: fast cold/pending operation может сделать до N<=6 последовательных HTTP
+attempts вместо одного. Все attempts входят в старые worker/job bounds и общий
+deadline; background probes, Redis write replay и новые processes не добавляются.
+После массового Redis отказа surviving classifier load измеряется в canary.
+Исправление не обещает пережить отказ всех replicas или устранить внешний сетевой
+blackhole; первоначальный внешний hop по прежним aggregates не доказан.
+
+Альтернативы: сохранить first-pending — оставляет зависимость результата от
+повреждённой replica; вернуть новый HTTP503 вместо pending — меняет server/API
+outage contract и старых consumers; увеличивать NetBird ICE grace без packet proof
+— задерживает настоящий failover и не устраняет длительный underlay outage.
+
+Owner: Xray-core scheduling/accounting; consumers XrayR и существующий scoped
+vpn.infra image writer. Org-wide дополнение в существующем ADR-20261001-01.
+Status: Accepted для source; runtime rollout ожидает exact CI artifact, one-node
+canary с pending primary/ready sibling и capacity/business smoke. Rollback —
+прежний immutable XrayR image; classifier/Redis configuration сохраняется.

@@ -308,13 +308,33 @@ func (m *AsyncDNSRouteMatcher) fetchPool(parent context.Context, domain string) 
 	}
 	launch()
 	var lastErr error
+	var pending *asyncDNSClassifierResponse
 	for active > 0 {
 		select {
 		case r := <-results:
 			active--
 			observe(r)
 			if r.err == nil {
-				return finish(r.response, nil, asyncDNSPoolWinnerCancel)
+				// Semantic validation normally happens at the job caller. Keep
+				// malformed decoded replies terminal here as well: a malformed
+				// pending shape must never authorize trying another endpoint.
+				if classifyAsyncDNSResponse(r.response, 0) == asyncDNSResponseInvalid {
+					return finish(r.response, nil, asyncDNSPoolTerminalCancel)
+				}
+				if r.response.State != "pending" {
+					return finish(r.response, nil, asyncDNSPoolWinnerCancel)
+				}
+				// Pending is also the classifier's degraded-L2 response. Retain
+				// its original retry hint, but let another member provide a
+				// classification. Fast pending peers are checked sequentially;
+				// only a stalled attempt triggers the existing bounded hedge.
+				if pending == nil {
+					pending = r.response
+				}
+				if active == 0 {
+					launch()
+				}
+				continue
 			}
 			lastErr = r.err
 			if !asyncDNSPoolRetryable(r.err) {
@@ -328,8 +348,17 @@ func (m *AsyncDNSRouteMatcher) fetchPool(parent context.Context, domain string) 
 			for launch() { // One hedge fills both spare slots; never cancels a live request for room.
 			}
 		case <-ctx.Done():
+			// A pending reply remains a successful job outcome if no usable
+			// peer responds in this job's budget. Caller cancellation still
+			// wins, and genuine peer timeouts retain their health accounting.
+			if pending != nil && parent.Err() == nil && deadlineCtx.Err() == context.DeadlineExceeded {
+				return finish(pending, nil, context.Cause(ctx))
+			}
 			return finish(nil, &asyncDNSFetchError{kind: asyncDNSFailureTransport, err: ctx.Err()}, context.Cause(ctx))
 		}
+	}
+	if pending != nil && parent.Err() == nil {
+		return finish(pending, nil, asyncDNSPoolWinnerCancel)
 	}
 	if lastErr == nil {
 		lastErr = &asyncDNSFetchError{kind: asyncDNSFailureTransport, err: ctx.Err()}

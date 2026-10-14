@@ -122,7 +122,11 @@ func TestAsyncDNSHTTPTraceTerminalAuthPendingAndCooldown(t *testing.T) {
 				t.Fatal("terminal behavior changed")
 			}
 			s := m.pool.endpointStats()
-			if calls.Load() != 1 || s[0].Attempts != 1 || s[1].Attempts != 0 {
+			attempts := uint64(1)
+			if status == 200 {
+				attempts = 2
+			}
+			if calls.Load() != attempts || s[0].Attempts != 1 || s[1].Attempts != attempts-1 {
 				t.Fatalf("fanout changed: %+v", s)
 			}
 			phase := asyncDNSHTTPFirstByte
@@ -142,14 +146,14 @@ func TestAsyncDNSHTTPTraceTerminalAuthPendingAndCooldown(t *testing.T) {
 			}
 			m.pool.mu.Unlock()
 			_, err = m.fetch("next.example")
-			if (err == nil) != (status == 200) || m.Stats().PoolSyntheticCooldown != 0 || calls.Load() != 2 {
+			if (err == nil) != (status == 200) || m.Stats().PoolSyntheticCooldown != 0 || calls.Load() != 2*attempts {
 				t.Fatal("cooldown fallback changed terminal behavior")
 			}
 			after := m.pool.endpointStats()
-			if after[0].Attempts != 1 || after[1].Attempts != 1 || after[1].Trace.Phases[phase] != 1 {
+			if after[0].Attempts != attempts || after[1].Attempts != attempts || after[1].Trace.Phases[phase] != attempts {
 				t.Fatalf("cooldown fallback HTTP phase/fanout changed: %+v", after)
 			}
-			if status == 200 && after[1].Pending != 1 {
+			if status == 200 && after[1].Pending != attempts {
 				t.Fatal("cooldown fallback pending changed")
 			}
 		})
