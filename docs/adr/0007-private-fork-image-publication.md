@@ -29,6 +29,10 @@ consumer delta равен нулю. Vendor path `vpn/xray-core`, writer XrayR и
 release tag. Ручная сборка на main сохраняет явный image tag и необязательные
 aliases. Ни release router, ни ручной запуск не меняют GitOps consumers.
 
+Исторический tag до миграции с публичными Docker definitions отклоняется
+до сборки с явной ошибкой. Его product source/Dockerfile не подменяются
+другой ревизией. Обычный путь — tag/revision, содержащий эту миграцию.
+
 Образы собирает только GitHub Actions на собственном Linux runner. Build и
 runtime base images берутся из существующего приватного platform catalog
 по immutable digest. Go crosscompile выполняется на build platform; ARM variant передаётся в GOARM. Два фиксированных staging

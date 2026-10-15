@@ -57,8 +57,27 @@ jobs:
       - name: Checkout exact release source or trusted main
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.release.tag_name || 'main' }}
+          ref: ${{ github.event.release.tag_name || github.sha }}
           persist-credentials: false
+
+      - name: Require migrated private Docker definitions
+        shell: bash
+        run: |
+          python3 - <<'PYBASES'
+          import pathlib, re, shlex
+          for name in ('.github/docker/Dockerfile', '.github/docker/Dockerfile.usa'):
+              text = pathlib.Path(name).read_text()
+              for line in text.splitlines():
+                  if re.match(r'^\s*#\s*syntax\s*=', line):
+                      raise SystemExit(f'{name}: external Dockerfile frontend is not allowed; use a source revision containing the private publisher migration')
+                  if not line.startswith('FROM '):
+                      continue
+                  fields = shlex.split(line)
+                  image = fields[2] if fields[1].startswith('--platform=') else fields[1]
+                  if not re.fullmatch(r'registry\.team\.evasionlab\.ru/[a-z0-9/_.:-]+@sha256:[a-f0-9]{64}', image):
+                      raise SystemExit(f'{name}: immutable private base required; use a source revision containing the private publisher migration')
+          print('Source revision contains immutable private Docker definitions')
+          PYBASES
 
       - name: Resolve configured private registry endpoint
         shell: bash
