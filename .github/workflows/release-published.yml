@@ -1,0 +1,19 @@
+name: Publish release assets
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  release:
+    if: github.repository == 'evasionlab/Xray-core' && github.event.action == 'published'
+    uses: evasionlab/Xray-core/.github/workflows/release.yml@main
+    secrets: inherit
+  release-win7:
+    if: github.repository == 'evasionlab/Xray-core' && github.event.action == 'published'
+    uses: evasionlab/Xray-core/.github/workflows/release-win7.yml@main
+    secrets: inherit

@@ -2,8 +2,7 @@ name: Build and Release
 
 on:
   workflow_dispatch:
-  release:
-    types: [published]
+  workflow_call:
   push:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -11,7 +10,7 @@ on:
 jobs:
   check-assets:
     runs-on: [self-hosted, Linux, X64]
-    if: github.ref == 'refs/heads/main' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository))
+    if: (github.ref == 'refs/heads/main' || (github.repository == 'evasionlab/Xray-core' && github.event_name == 'release' && github.event.action == 'published')) && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository))
     steps:
       - name: Restore Geodat Cache
         uses: actions/cache/restore@v6
@@ -65,7 +64,7 @@ jobs:
               owner,
               repo,
               workflow_id: 'scheduled-assets-update.yml',
-              ref: context.ref
+              ref: 'main'
             });
             console.log('Triggered scheduled-assets-update.yml due to missing assets on branch:', context.ref);
 
@@ -164,7 +163,7 @@ jobs:
 
     runs-on: [self-hosted, Linux, X64]
     # Internal PR commits already build on push; fork code cannot use private runners.
-    if: github.ref == 'refs/heads/main' && ((github.event_name != 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository))
+    if: (github.ref == 'refs/heads/main' || (github.repository == 'evasionlab/Xray-core' && github.event_name == 'release' && github.event.action == 'published')) && ((github.event_name != 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository))
     env:
       GOOS: ${{ matrix.goos }}
       GOARCH: ${{ matrix.goarch }}
@@ -173,6 +172,8 @@ jobs:
     steps:
       - name: Checkout codebase
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
 
       - name: Set up NDK
         if: matrix.goos == 'android'
