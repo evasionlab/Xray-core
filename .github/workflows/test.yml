@@ -160,5 +160,14 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Ensure Linux race compiler is available
+        shell: bash
+        run: |
+          if ! command -v gcc >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install --yes --no-install-recommends build-essential
+          fi
       - name: Validate runtime interface and buffer contracts under races
+        env:
+          CGO_ENABLED: '1'
         run: go test -count=1 -race ./features/routing ./proxy/vless/inbound ./proxy/trojan ./common/buf ./transport/pipe ./proxy/freedom ./proxy/vless/encoding
