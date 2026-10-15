@@ -9,7 +9,7 @@ on:
 jobs:
   check-assets:
     runs-on: [self-hosted, Linux, X64]
-    if: (github.event_name != 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: github.ref == 'refs/heads/main' && ((github.event_name != 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository))
     steps:
       - name: Restore Geodat Cache
         uses: actions/cache/restore@v6
@@ -38,7 +38,7 @@ jobs:
 
   check-proto:
     runs-on: [self-hosted, Linux, X64]
-    if: (github.event_name != 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: github.ref == 'refs/heads/main' && ((github.event_name != 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository))
     steps:
       - name: Checkout codebase
         uses: actions/checkout@v7
@@ -55,7 +55,7 @@ jobs:
 
   check-format:
     runs-on: [self-hosted, Linux, X64]
-    if: (github.event_name != 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: github.ref == 'refs/heads/main' && ((github.event_name != 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository))
     permissions:
       contents: read
     steps:
@@ -74,7 +74,7 @@ jobs:
 
   test:
     needs: check-assets
-    if: (github.event_name != 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: github.ref == 'refs/heads/main' && ((github.event_name != 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository))
     permissions:
       contents: read
     runs-on: ${{ matrix.runner }}
@@ -108,7 +108,7 @@ jobs:
   # Infrastructure owns these availability variables; enable only after matching hosts exist.
   test-native:
     needs: check-assets
-    if: github.event_name == 'workflow_dispatch' && vars.CI_NATIVE_WINDOWS_ENABLED == 'true' && vars.CI_NATIVE_MACOS_ENABLED == 'true'
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' && vars.CI_NATIVE_WINDOWS_ENABLED == 'true' && vars.CI_NATIVE_MACOS_ENABLED == 'true')
     permissions:
       contents: read
     runs-on: ${{ matrix.runner }}
@@ -138,6 +138,7 @@ jobs:
         run: go test -timeout 1h -v ./...
 
   runtime-interfaces:
+    if: github.ref == 'refs/heads/main'
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 15
     permissions:
