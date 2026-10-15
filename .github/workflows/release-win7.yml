@@ -186,9 +186,10 @@ jobs:
           token: ${{ secrets.CI_REPO_CHECKOUT_TOKEN || secrets.GH_PAT }}
           persist-credentials: false
           path: .ci-artifact-tools
+          sparse-checkout-cone-mode: false
           sparse-checkout: |
-            .github/actions
-            tools/ci
+            /.github/actions/
+            /tools/ci/registry_artifacts.py
 
       - name: Upload files to Artifacts
         uses: ./.ci-artifact-tools/.github/actions/registry-artifact-upload
