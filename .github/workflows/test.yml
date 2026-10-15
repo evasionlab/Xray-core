@@ -82,10 +82,42 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows
-            runner: [self-hosted, Windows, X64]
           - os: linux
             runner: [self-hosted, Linux, X64]
+    steps:
+      - name: Checkout codebase
+        uses: actions/checkout@v7
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Restore Geodat Cache
+        uses: actions/cache/restore@v6
+        with:
+          path: resources
+          key: xray-geodat-
+          enableCrossOsArchive: true
+      - name: Test
+        run: go test -timeout 1h -v ./...
+
+      - name: Report native test availability
+        shell: bash
+        run: echo "Native Windows/macOS checks are not run by Linux CI. No self-hosted Windows/macOS hosts are configured." >> "$GITHUB_STEP_SUMMARY"
+
+  # Infrastructure owns these availability variables; enable only after matching hosts exist.
+  test-native:
+    needs: check-assets
+    if: github.event_name == 'workflow_dispatch' && vars.CI_NATIVE_WINDOWS_ENABLED == 'true' && vars.CI_NATIVE_MACOS_ENABLED == 'true'
+    permissions:
+      contents: read
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows
+            runner: [self-hosted, Windows, X64]
           - os: macos
             runner: [self-hosted, macOS]
     steps:
