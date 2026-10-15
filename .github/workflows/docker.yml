@@ -16,10 +16,13 @@ on:
         type: boolean
         default: false
 
+env:
+  DOCKER_BUILD_RECORD_UPLOAD: "false"
+
 jobs:
   build-and-push:
-    if: (github.event.action != 'published') || (github.event.action == 'published' && github.event.release.prerelease == true)
-    runs-on: ubuntu-latest
+    if: ((github.event.action != 'published') || (github.event.action == 'published' && github.event.release.prerelease == true)) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, Linux, X64]
     permissions:
       contents: read
       packages: write

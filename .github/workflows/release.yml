@@ -10,8 +10,8 @@ on:
 
 jobs:
   check-assets:
-    runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name
+    runs-on: [self-hosted, Linux, X64]
+    if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     steps:
       - name: Restore Geodat Cache
         uses: actions/cache/restore@v6
@@ -78,6 +78,7 @@ jobs:
     permissions:
       contents: write
     strategy:
+      max-parallel: 4
       matrix:
         # Include amd64 on all platforms.
         goos: [windows, freebsd, openbsd, linux, darwin]
@@ -161,8 +162,9 @@ jobs:
           # END OPENBSD ARM
       fail-fast: false
 
-    runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name
+    runs-on: [self-hosted, Linux, X64]
+    # Internal PR commits already build on push; fork code cannot use private runners.
+    if: (github.event_name != 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     env:
       GOOS: ${{ matrix.goos }}
       GOARCH: ${{ matrix.goarch }}
@@ -287,7 +289,7 @@ jobs:
           file_glob: true
 
       - name: Upload files to Artifacts
-        uses: actions/upload-artifact@v7
+        uses: evasionlab/infra/.github/actions/registry-artifact-upload@b449677644878e5dd9328e0d7d4a6209f449f6e0
         with:
           name: Xray-${{ env.ASSET_NAME }}
           path: |
