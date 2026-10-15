@@ -195,9 +195,15 @@ jobs:
           echo "GOOS: $GOOS, GOARCH: $GOARCH, GOARM: $GOARM, GOMIPS: $GOMIPS, RELEASE_NAME: $_NAME"
           echo "ASSET_NAME=$_NAME" >> $GITHUB_ENV
 
+      - name: Use per-instance repository Go caches
+        shell: bash
+        run: |
+          printf 'GOCACHE=%s/go-local-cache/%s/build\n' "$RUNNER_TOOL_CACHE" "$GITHUB_REPOSITORY" >> "$GITHUB_ENV"
+          printf 'GOMODCACHE=%s/go-local-cache/%s/modules\n' "$RUNNER_TOOL_CACHE" "$GITHUB_REPOSITORY" >> "$GITHUB_ENV"
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
+          cache: false
           go-version-file: go.mod
           check-latest: true
 
