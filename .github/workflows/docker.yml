@@ -68,9 +68,9 @@ jobs:
           for name in ('.github/docker/Dockerfile', '.github/docker/Dockerfile.usa'):
               text = pathlib.Path(name).read_text()
               for line in text.splitlines():
-                  if re.match(r'^\s*#\s*syntax\s*=', line):
+                  if re.match(r'^\s*#\s*syntax\s*=', line, re.IGNORECASE):
                       raise SystemExit(f'{name}: external Dockerfile frontend is not allowed; use a source revision containing the private publisher migration')
-                  if not line.startswith('FROM '):
+                  if not re.match(r'^\s*FROM(?:\s|$)', line, re.IGNORECASE):
                       continue
                   fields = shlex.split(line)
                   image = fields[2] if fields[1].startswith('--platform=') else fields[1]
