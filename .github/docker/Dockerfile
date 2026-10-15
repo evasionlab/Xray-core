@@ -1,12 +1,14 @@
-# syntax=docker/dockerfile:latest
-FROM --platform=$BUILDPLATFORM golang:latest AS build
+FROM --platform=$BUILDPLATFORM registry.team.evasionlab.ru/platform/library/golang:1.26-alpine@sha256:ce864e7223ac17b1775e6fd0b4c0db580c2eb50e7953a427916379e4b92a1628 AS build
 
 # Build xray-core
 WORKDIR /src
 COPY . .
 ARG TARGETOS
 ARG TARGETARCH
-RUN GOOS=$TARGETOS GOARCH=$TARGETARCH CGO_ENABLED=0 go build -o xray -trimpath -buildvcs=false -gcflags="all=-l=4" -ldflags "-s -w -buildid=" ./main
+ARG TARGETVARIANT
+RUN set -eu; \
+    if [ "$TARGETARCH" = arm ]; then export GOARM="${TARGETVARIANT#v}"; fi; \
+    GOOS=$TARGETOS GOARCH=$TARGETARCH CGO_ENABLED=0 go build -o xray -trimpath -buildvcs=false -gcflags="all=-l=4" -ldflags "-s -w -buildid=" ./main
 
 # Download geodat into a staging directory
 ADD https://raw.githubusercontent.com/Loyalsoldier/v2ray-rules-dat/release/geoip.dat /tmp/geodat/geoip.dat
@@ -46,7 +48,7 @@ RUN mkdir -p /tmp/var/log/xray && touch \
   /tmp/var/log/xray/error.log
 
 # Build finally image
-FROM gcr.io/distroless/static:nonroot
+FROM registry.team.evasionlab.ru/platform/distroless/static:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3
 
 COPY --from=build --chown=0:0 --chmod=755 /src/xray /usr/local/bin/xray
 COPY --from=build --chown=65532:65532 --chmod=755 /tmp/empty /usr/local/share/xray
