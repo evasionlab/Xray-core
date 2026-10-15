@@ -178,8 +178,21 @@ jobs:
           tag: ${{ github.ref }}
           file_glob: true
 
+      - name: Checkout pinned private artifact transport
+        uses: actions/checkout@v7
+        with:
+          repository: evasionlab/infra
+          ref: b449677644878e5dd9328e0d7d4a6209f449f6e0
+          token: ${{ secrets.CI_REPO_CHECKOUT_TOKEN || secrets.GH_PAT }}
+          persist-credentials: false
+          path: .ci-artifact-tools
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /.github/actions/
+            /tools/ci/registry_artifacts.py
+
       - name: Upload files to Artifacts
-        uses: evasionlab/infra/.github/actions/registry-artifact-upload@b449677644878e5dd9328e0d7d4a6209f449f6e0
+        uses: ./.ci-artifact-tools/.github/actions/registry-artifact-upload
         with:
           name: Xray-${{ env.ASSET_NAME }}
           path: |
