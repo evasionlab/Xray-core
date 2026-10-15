@@ -75,8 +75,9 @@ jobs:
           # END Windows 7
       fail-fast: false
 
-    runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name
+    runs-on: [self-hosted, Linux, X64]
+    # Internal PR commits already build on push; fork code cannot use private runners.
+    if: github.event_name != 'pull_request'
     env:
       GOOS: ${{ matrix.goos}}
       GOARCH: ${{ matrix.goarch }}
@@ -177,7 +178,7 @@ jobs:
           file_glob: true
 
       - name: Upload files to Artifacts
-        uses: actions/upload-artifact@v7
+        uses: evasionlab/infra/.github/actions/registry-artifact-upload@b449677644878e5dd9328e0d7d4a6209f449f6e0
         with:
           name: Xray-${{ env.ASSET_NAME }}
           path: |
