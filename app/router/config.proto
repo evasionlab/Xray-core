@@ -84,6 +84,9 @@ message AsyncDnsRouteConfig {
   uint32 max_waiters = 10;
   string snapshot_path = 11;
   string snapshot_compatibility_id = 12;
+  // Empty/ru preserves legacy RU selection, including configured stale grace.
+  // non_ru requires fresh explicit classifier answer-set confirmation.
+  string match_decision = 13;
 }
 
 message WebhookConfig {

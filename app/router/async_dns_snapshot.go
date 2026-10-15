@@ -46,6 +46,7 @@ type asyncDNSSnapshotStore struct {
 type asyncDNSSnapshotEntry struct {
 	Domain          string    `json:"domain"`
 	RouteRU         bool      `json:"ru"`
+	NonRuConfirmed  bool      `json:"nonRuConfirmed,omitempty"`
 	Generation      string    `json:"generation"`
 	FreshUntil      time.Time `json:"freshUntil"`
 	HardUntil       time.Time `json:"hardUntil"`
@@ -142,7 +143,7 @@ func decodeAsyncDNSSnapshot(data []byte, identity string, now time.Time, capacit
 	entries := make([]asyncDNSSnapshotEntry, 0, min(capacity, len(payload.Entries)))
 	seen := make(map[string]bool, len(payload.Entries))
 	for _, e := range payload.Entries {
-		if e.Domain == "" || len(e.Domain) > 253 || normalizeAsyncDNSDomain(e.Domain) != e.Domain || seen[e.Domain] || e.HardUntil.Before(e.FreshUntil) || e.ServerHardUntil.Before(e.HardUntil) || e.FreshUntil.After(payload.SavedAt.Add(maxTTL)) || e.LastUsed.After(payload.SavedAt) {
+		if e.RouteRU && e.NonRuConfirmed || e.Domain == "" || len(e.Domain) > 253 || normalizeAsyncDNSDomain(e.Domain) != e.Domain || seen[e.Domain] || e.HardUntil.Before(e.FreshUntil) || e.ServerHardUntil.Before(e.HardUntil) || e.FreshUntil.After(payload.SavedAt.Add(maxTTL)) || e.LastUsed.After(payload.SavedAt) {
 			return nil, errors.New("snapshot contains invalid cache metadata")
 		}
 		seen[e.Domain] = true
@@ -188,7 +189,7 @@ func (m *AsyncDNSRouteMatcher) restoreSnapshot() {
 			if !time.Now().Before(e.HardUntil) {
 				continue
 			}
-			m.putEntry(e.Domain, asyncDNSCacheEntry{routeRU: e.RouteRU, generation: e.Generation, freshUntil: e.FreshUntil, hardUntil: e.HardUntil, serverHardUntil: e.ServerHardUntil, refreshAt: e.RefreshAt, lastUsed: e.LastUsed})
+			m.putEntry(e.Domain, asyncDNSCacheEntry{routeRU: e.RouteRU, nonRuConfirmed: e.NonRuConfirmed, generation: e.Generation, freshUntil: e.FreshUntil, hardUntil: e.HardUntil, serverHardUntil: e.ServerHardUntil, refreshAt: e.RefreshAt, lastUsed: e.LastUsed})
 		}
 		m.stats.restoredEntries.Store(uint64(len(m.cache)))
 		s.lastDirty = m.dirty
@@ -208,7 +209,7 @@ func (m *AsyncDNSRouteMatcher) captureSnapshot() (asyncDNSSnapshotPayload, uint6
 		if !p.SavedAt.Before(e.hardUntil) {
 			continue
 		}
-		p.Entries = append(p.Entries, asyncDNSSnapshotEntry{Domain: domain, RouteRU: e.routeRU, Generation: e.generation, FreshUntil: e.freshUntil, HardUntil: e.hardUntil, ServerHardUntil: e.serverHardUntil, RefreshAt: e.refreshAt, LastUsed: e.lastUsed})
+		p.Entries = append(p.Entries, asyncDNSSnapshotEntry{Domain: domain, RouteRU: e.routeRU, NonRuConfirmed: e.nonRuConfirmed, Generation: e.generation, FreshUntil: e.freshUntil, HardUntil: e.hardUntil, ServerHardUntil: e.serverHardUntil, RefreshAt: e.refreshAt, LastUsed: e.lastUsed})
 	}
 	return p, m.dirty
 }
