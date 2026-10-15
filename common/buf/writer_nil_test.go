@@ -28,6 +28,7 @@ func (c *nilSlotCounter) Set(v int64) int64 {
 	*c = nilSlotCounter(v)
 	return int64(old)
 }
+
 func (c *nilSlotCounter) Add(v int64) int64 {
 	*c += nilSlotCounter(v)
 	return int64(*c)
