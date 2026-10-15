@@ -292,7 +292,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: evasionlab/infra
-          ref: 1a4fc2b9f8b43ac7421097388cdafe531cfeec2a
+          ref: 121baf45b77dbaa88b8b3ccce04c084c85da488b
           token: ${{ secrets.CI_REPO_CHECKOUT_TOKEN || secrets.GH_PAT }}
           persist-credentials: false
           path: .ci-artifact-tools
