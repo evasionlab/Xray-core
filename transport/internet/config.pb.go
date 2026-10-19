@@ -779,8 +779,10 @@ type SocketConfig struct {
 	AddressPortStrategy        AddressPortStrategy  `protobuf:"varint,21,opt,name=address_port_strategy,json=addressPortStrategy,proto3,enum=xray.transport.internet.AddressPortStrategy" json:"address_port_strategy,omitempty"`
 	HappyEyeballs              *HappyEyeballsConfig `protobuf:"bytes,22,opt,name=happy_eyeballs,json=happyEyeballs,proto3" json:"happy_eyeballs,omitempty"`
 	TrustedXForwardedFor       []string             `protobuf:"bytes,23,rep,name=trusted_x_forwarded_for,json=trustedXForwardedFor,proto3" json:"trusted_x_forwarded_for,omitempty"`
-	unknownFields              protoimpl.UnknownFields
-	sizeCache                  protoimpl.SizeCache
+	// Explicit Linux TCP IPv4 actual-socket country policy; unknown destinations deny.
+	CountryMarkGuard *CountryMarkGuard `protobuf:"bytes,24,opt,name=country_mark_guard,json=countryMarkGuard,proto3" json:"country_mark_guard,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *SocketConfig) Reset() {
@@ -960,6 +962,13 @@ func (x *SocketConfig) GetTrustedXForwardedFor() []string {
 	return nil
 }
 
+func (x *SocketConfig) GetCountryMarkGuard() *CountryMarkGuard {
+	if x != nil {
+		return x.CountryMarkGuard
+	}
+	return nil
+}
+
 type HappyEyeballsConfig struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	PrioritizeIpv6   bool                   `protobuf:"varint,1,opt,name=prioritize_ipv6,json=prioritizeIpv6,proto3" json:"prioritize_ipv6,omitempty"`
@@ -1028,6 +1037,74 @@ func (x *HappyEyeballsConfig) GetMaxConcurrentTry() uint32 {
 	return 0
 }
 
+type CountryMarkGuard struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RuMark        uint32                 `protobuf:"varint,1,opt,name=ru_mark,json=ruMark,proto3" json:"ru_mark,omitempty"`
+	NonRuMark     uint32                 `protobuf:"varint,2,opt,name=non_ru_mark,json=nonRuMark,proto3" json:"non_ru_mark,omitempty"`
+	GeoipFile     string                 `protobuf:"bytes,3,opt,name=geoip_file,json=geoipFile,proto3" json:"geoip_file,omitempty"`
+	GeoipSha256   string                 `protobuf:"bytes,4,opt,name=geoip_sha256,json=geoipSha256,proto3" json:"geoip_sha256,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CountryMarkGuard) Reset() {
+	*x = CountryMarkGuard{}
+	mi := &file_transport_internet_config_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CountryMarkGuard) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CountryMarkGuard) ProtoMessage() {}
+
+func (x *CountryMarkGuard) ProtoReflect() protoreflect.Message {
+	mi := &file_transport_internet_config_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CountryMarkGuard.ProtoReflect.Descriptor instead.
+func (*CountryMarkGuard) Descriptor() ([]byte, []int) {
+	return file_transport_internet_config_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *CountryMarkGuard) GetRuMark() uint32 {
+	if x != nil {
+		return x.RuMark
+	}
+	return 0
+}
+
+func (x *CountryMarkGuard) GetNonRuMark() uint32 {
+	if x != nil {
+		return x.NonRuMark
+	}
+	return 0
+}
+
+func (x *CountryMarkGuard) GetGeoipFile() string {
+	if x != nil {
+		return x.GeoipFile
+	}
+	return ""
+}
+
+func (x *CountryMarkGuard) GetGeoipSha256() string {
+	if x != nil {
+		return x.GeoipSha256
+	}
+	return ""
+}
+
 var File_transport_internet_config_proto protoreflect.FileDescriptor
 
 const file_transport_internet_config_proto_rawDesc = "" +
@@ -1088,7 +1165,7 @@ const file_transport_internet_config_proto_rawDesc = "" +
 	"\x05level\x18\x03 \x01(\tR\x05level\x12\x10\n" +
 	"\x03opt\x18\x04 \x01(\tR\x03opt\x12\x14\n" +
 	"\x05value\x18\x05 \x01(\tR\x05value\x12\x12\n" +
-	"\x04type\x18\x06 \x01(\tR\x04type\"\xc9\b\n" +
+	"\x04type\x18\x06 \x01(\tR\x04type\"\xa2\t\n" +
 	"\fSocketConfig\x12\x12\n" +
 	"\x04mark\x18\x01 \x01(\x05R\x04mark\x12\x10\n" +
 	"\x03tfo\x18\x02 \x01(\x05R\x03tfo\x12H\n" +
@@ -1111,7 +1188,8 @@ const file_transport_internet_config_proto_rawDesc = "" +
 	"\rcustomSockopt\x18\x14 \x03(\v2&.xray.transport.internet.CustomSockoptR\rcustomSockopt\x12`\n" +
 	"\x15address_port_strategy\x18\x15 \x01(\x0e2,.xray.transport.internet.AddressPortStrategyR\x13addressPortStrategy\x12S\n" +
 	"\x0ehappy_eyeballs\x18\x16 \x01(\v2,.xray.transport.internet.HappyEyeballsConfigR\rhappyEyeballs\x125\n" +
-	"\x17trusted_x_forwarded_for\x18\x17 \x03(\tR\x14trustedXForwardedFor\"/\n" +
+	"\x17trusted_x_forwarded_for\x18\x17 \x03(\tR\x14trustedXForwardedFor\x12W\n" +
+	"\x12country_mark_guard\x18\x18 \x01(\v2).xray.transport.internet.CountryMarkGuardR\x10countryMarkGuard\"/\n" +
 	"\n" +
 	"TProxyMode\x12\a\n" +
 	"\x03Off\x10\x00\x12\n" +
@@ -1125,7 +1203,13 @@ const file_transport_internet_config_proto_rawDesc = "" +
 	"interleave\x12\x1f\n" +
 	"\vtry_delayMs\x18\x03 \x01(\x04R\n" +
 	"tryDelayMs\x12,\n" +
-	"\x12max_concurrent_try\x18\x04 \x01(\rR\x10maxConcurrentTry*\xa9\x01\n" +
+	"\x12max_concurrent_try\x18\x04 \x01(\rR\x10maxConcurrentTry\"\x8d\x01\n" +
+	"\x10CountryMarkGuard\x12\x17\n" +
+	"\aru_mark\x18\x01 \x01(\rR\x06ruMark\x12\x1e\n" +
+	"\vnon_ru_mark\x18\x02 \x01(\rR\tnonRuMark\x12\x1d\n" +
+	"\n" +
+	"geoip_file\x18\x03 \x01(\tR\tgeoipFile\x12!\n" +
+	"\fgeoip_sha256\x18\x04 \x01(\tR\vgeoipSha256*\xa9\x01\n" +
 	"\x0eDomainStrategy\x12\t\n" +
 	"\x05AS_IS\x10\x00\x12\n" +
 	"\n" +
@@ -1165,7 +1249,7 @@ func file_transport_internet_config_proto_rawDescGZIP() []byte {
 }
 
 var file_transport_internet_config_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_transport_internet_config_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_transport_internet_config_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_transport_internet_config_proto_goTypes = []any{
 	(DomainStrategy)(0),          // 0: xray.transport.internet.DomainStrategy
 	(AddressPortStrategy)(0),     // 1: xray.transport.internet.AddressPortStrategy
@@ -1178,16 +1262,17 @@ var file_transport_internet_config_proto_goTypes = []any{
 	(*CustomSockopt)(nil),        // 8: xray.transport.internet.CustomSockopt
 	(*SocketConfig)(nil),         // 9: xray.transport.internet.SocketConfig
 	(*HappyEyeballsConfig)(nil),  // 10: xray.transport.internet.HappyEyeballsConfig
-	(*serial.TypedMessage)(nil),  // 11: xray.common.serial.TypedMessage
-	(*net.IPOrDomain)(nil),       // 12: xray.common.net.IPOrDomain
+	(*CountryMarkGuard)(nil),     // 11: xray.transport.internet.CountryMarkGuard
+	(*serial.TypedMessage)(nil),  // 12: xray.common.serial.TypedMessage
+	(*net.IPOrDomain)(nil),       // 13: xray.common.net.IPOrDomain
 }
 var file_transport_internet_config_proto_depIdxs = []int32{
-	11, // 0: xray.transport.internet.TransportConfig.settings:type_name -> xray.common.serial.TypedMessage
-	12, // 1: xray.transport.internet.StreamConfig.address:type_name -> xray.common.net.IPOrDomain
+	12, // 0: xray.transport.internet.TransportConfig.settings:type_name -> xray.common.serial.TypedMessage
+	13, // 1: xray.transport.internet.StreamConfig.address:type_name -> xray.common.net.IPOrDomain
 	3,  // 2: xray.transport.internet.StreamConfig.transport_settings:type_name -> xray.transport.internet.TransportConfig
-	11, // 3: xray.transport.internet.StreamConfig.security_settings:type_name -> xray.common.serial.TypedMessage
-	11, // 4: xray.transport.internet.StreamConfig.udpmasks:type_name -> xray.common.serial.TypedMessage
-	11, // 5: xray.transport.internet.StreamConfig.tcpmasks:type_name -> xray.common.serial.TypedMessage
+	12, // 3: xray.transport.internet.StreamConfig.security_settings:type_name -> xray.common.serial.TypedMessage
+	12, // 4: xray.transport.internet.StreamConfig.udpmasks:type_name -> xray.common.serial.TypedMessage
+	12, // 5: xray.transport.internet.StreamConfig.tcpmasks:type_name -> xray.common.serial.TypedMessage
 	6,  // 6: xray.transport.internet.StreamConfig.quic_params:type_name -> xray.transport.internet.QuicParams
 	9,  // 7: xray.transport.internet.StreamConfig.socket_settings:type_name -> xray.transport.internet.SocketConfig
 	5,  // 8: xray.transport.internet.QuicParams.udp_hop:type_name -> xray.transport.internet.UdpHop
@@ -1196,11 +1281,12 @@ var file_transport_internet_config_proto_depIdxs = []int32{
 	8,  // 11: xray.transport.internet.SocketConfig.customSockopt:type_name -> xray.transport.internet.CustomSockopt
 	1,  // 12: xray.transport.internet.SocketConfig.address_port_strategy:type_name -> xray.transport.internet.AddressPortStrategy
 	10, // 13: xray.transport.internet.SocketConfig.happy_eyeballs:type_name -> xray.transport.internet.HappyEyeballsConfig
-	14, // [14:14] is the sub-list for method output_type
-	14, // [14:14] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	11, // 14: xray.transport.internet.SocketConfig.country_mark_guard:type_name -> xray.transport.internet.CountryMarkGuard
+	15, // [15:15] is the sub-list for method output_type
+	15, // [15:15] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_transport_internet_config_proto_init() }
@@ -1214,7 +1300,7 @@ func file_transport_internet_config_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_transport_internet_config_proto_rawDesc), len(file_transport_internet_config_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   8,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
