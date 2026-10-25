@@ -15,6 +15,7 @@ import (
 	"github.com/xtls/xray-core/common/signal/done"
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/routing"
+	"github.com/xtls/xray-core/internal/forwardingdrain"
 	"github.com/xtls/xray-core/transport"
 	"github.com/xtls/xray-core/transport/pipe"
 )
@@ -93,6 +94,9 @@ type ServerWorker struct {
 }
 
 func NewServerWorker(ctx context.Context, d routing.Dispatcher, link *transport.Link) (*ServerWorker, error) {
+	if forwardingdrain.FromContext(ctx) != nil {
+		return nil, forwardingdrain.ErrUnsupported
+	}
 	worker := &ServerWorker{
 		dispatcher:     d,
 		link:           link,

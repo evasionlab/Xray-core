@@ -16,6 +16,7 @@ import (
 
 // Manager manages all inbound handlers.
 type Manager struct {
+	authority        context.Context
 	access           sync.RWMutex
 	untaggedHandlers []inbound.Handler
 	taggedHandlers   map[string]inbound.Handler
@@ -25,6 +26,7 @@ type Manager struct {
 // New returns a new Manager for inbound handlers.
 func New(ctx context.Context, config *proxyman.InboundConfig) (*Manager, error) {
 	m := &Manager{
+		authority:      ctx,
 		taggedHandlers: make(map[string]inbound.Handler),
 	}
 	return m, nil
@@ -37,6 +39,9 @@ func (*Manager) Type() interface{} {
 
 // AddHandler implements inbound.Manager.
 func (m *Manager) AddHandler(ctx context.Context, handler inbound.Handler) error {
+	if err := core.ValidateForwardingGraphMutation(m.authority); err != nil {
+		return err
+	}
 	m.access.Lock()
 	defer m.access.Unlock()
 
@@ -71,6 +76,9 @@ func (m *Manager) GetHandler(ctx context.Context, tag string) (inbound.Handler, 
 
 // RemoveHandler implements inbound.Manager.
 func (m *Manager) RemoveHandler(ctx context.Context, tag string) error {
+	if err := core.ValidateForwardingGraphMutation(m.authority); err != nil {
+		return err
+	}
 	if tag == "" {
 		return common.ErrNoClue
 	}
@@ -153,6 +161,9 @@ func (m *Manager) Close() error {
 
 // NewHandler creates a new inbound.Handler based on the given config.
 func NewHandler(ctx context.Context, config *core.InboundHandlerConfig) (inbound.Handler, error) {
+	if err := core.ValidateForwardingInbound(ctx, config); err != nil {
+		return nil, err
+	}
 	rawReceiverSettings, err := config.ReceiverSettings.GetInstance()
 	if err != nil {
 		return nil, err

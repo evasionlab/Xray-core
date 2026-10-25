@@ -22,6 +22,7 @@ import (
 	"github.com/xtls/xray-core/features/outbound"
 	"github.com/xtls/xray-core/features/policy"
 	"github.com/xtls/xray-core/features/stats"
+	"github.com/xtls/xray-core/internal/forwardingdrain"
 	"github.com/xtls/xray-core/proxy"
 	"github.com/xtls/xray-core/transport"
 	"github.com/xtls/xray-core/transport/internet"
@@ -57,25 +58,33 @@ func getStatCounter(v *core.Instance, tag string) (stats.Counter, stats.Counter)
 }
 
 // Handler implements outbound.Handler.
-type Handler struct {
-	tag             string
-	senderSettings  *proxyman.SenderConfig
-	streamSettings  *internet.MemoryStreamConfig
-	proxyConfig     proto.Message
-	proxy           proxy.Outbound
-	outboundManager outbound.Manager
-	mux             *mux.ClientManager
-	xudp            *mux.ClientManager
-	udp443          string
-	uplinkCounter   stats.Counter
-	downlinkCounter stats.Counter
-}
+type (
+	handlerDispatchKey struct{}
+	Handler            struct {
+		forwardingOwner *forwardingdrain.Owner
+		tag             string
+		senderSettings  *proxyman.SenderConfig
+		streamSettings  *internet.MemoryStreamConfig
+		proxyConfig     proto.Message
+		proxy           proxy.Outbound
+		outboundManager outbound.Manager
+		mux             *mux.ClientManager
+		xudp            *mux.ClientManager
+		udp443          string
+		uplinkCounter   stats.Counter
+		downlinkCounter stats.Counter
+	}
+)
 
 // NewHandler creates a new Handler based on the given configuration.
 func NewHandler(ctx context.Context, config *core.OutboundHandlerConfig) (outbound.Handler, error) {
+	if err := core.ValidateForwardingOutbound(ctx, config); err != nil {
+		return nil, err
+	}
 	v := core.MustFromContext(ctx)
 	uplinkCounter, downlinkCounter := getStatCounter(v, config.Tag)
 	h := &Handler{
+		forwardingOwner: forwardingdrain.FromContext(ctx),
 		tag:             config.Tag,
 		outboundManager: v.GetFeature(outbound.ManagerType()).(outbound.Manager),
 		uplinkCounter:   uplinkCounter,
@@ -179,6 +188,29 @@ func (h *Handler) Tag() string {
 
 // Dispatch implements proxy.Outbound.Dispatch.
 func (h *Handler) Dispatch(ctx context.Context, link *transport.Link) {
+	if h.forwardingOwner != forwardingdrain.FromContext(ctx) {
+		common.Interrupt(link.Reader)
+		common.Interrupt(link.Writer)
+		return
+	}
+	if h.forwardingOwner != nil {
+		if err := h.forwardingOwner.CheckParent(ctx); err != nil {
+			common.Interrupt(link.Reader)
+			common.Interrupt(link.Writer)
+			return
+		}
+		admitted, err := forwardingdrain.Child(ctx, link.Reader, link.Writer)
+		if err != nil {
+			common.Interrupt(link.Reader)
+			common.Interrupt(link.Writer)
+			return
+		}
+		defer admitted.Done()
+		// The private value is installed only after actual atomic admission. Dial
+		// cannot use an arbitrary owner-carrying parent context as this handler.
+		ctx = context.WithValue(admitted.Context(ctx), handlerDispatchKey{}, h)
+		defer func() { common.Interrupt(link.Reader); common.Interrupt(link.Writer) }()
+	}
 	outbounds := session.OutboundsFromContext(ctx)
 	ob := outbounds[len(outbounds)-1]
 	content := session.ContentFromContext(ctx)
@@ -270,6 +302,20 @@ func (h *Handler) DestIpAddress() net.IP {
 
 // Dial implements internet.Dialer.
 func (h *Handler) Dial(ctx context.Context, dest net.Destination) (stat.Connection, error) {
+	if h.forwardingOwner != forwardingdrain.FromContext(ctx) {
+		return nil, forwardingdrain.ErrAuthority
+	}
+	if h.forwardingOwner != nil {
+		if ctx.Value(handlerDispatchKey{}) != h {
+			return nil, forwardingdrain.ErrAuthority
+		}
+		if err := h.forwardingOwner.CheckParent(ctx); err != nil {
+			return nil, err
+		}
+		if !dest.IsValid() || !dest.Address.Family().IsIP() || session.TimeoutOnlyFromContext(ctx) {
+			return nil, forwardingdrain.ErrUnsupported
+		}
+	}
 	if h.senderSettings != nil {
 
 		if h.senderSettings.ProxySettings.HasTag() {
