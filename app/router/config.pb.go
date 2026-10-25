@@ -335,8 +335,11 @@ type AsyncDnsRouteConfig struct {
 	MaxWaiters              uint32 `protobuf:"varint,10,opt,name=max_waiters,json=maxWaiters,proto3" json:"max_waiters,omitempty"`
 	SnapshotPath            string `protobuf:"bytes,11,opt,name=snapshot_path,json=snapshotPath,proto3" json:"snapshot_path,omitempty"`
 	SnapshotCompatibilityId string `protobuf:"bytes,12,opt,name=snapshot_compatibility_id,json=snapshotCompatibilityId,proto3" json:"snapshot_compatibility_id,omitempty"`
-	unknownFields           protoimpl.UnknownFields
-	sizeCache               protoimpl.SizeCache
+	// Empty/ru preserves legacy RU selection, including configured stale grace.
+	// non_ru requires fresh explicit classifier answer-set confirmation.
+	MatchDecision string `protobuf:"bytes,13,opt,name=match_decision,json=matchDecision,proto3" json:"match_decision,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *AsyncDnsRouteConfig) Reset() {
@@ -449,6 +452,13 @@ func (x *AsyncDnsRouteConfig) GetSnapshotPath() string {
 func (x *AsyncDnsRouteConfig) GetSnapshotCompatibilityId() string {
 	if x != nil {
 		return x.SnapshotCompatibilityId
+	}
+	return ""
+}
+
+func (x *AsyncDnsRouteConfig) GetMatchDecision() string {
+	if x != nil {
+		return x.MatchDecision
 	}
 	return ""
 }
@@ -825,7 +835,7 @@ const file_app_router_config_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\f\n" +
 	"\n" +
-	"target_tag\"\xf7\x03\n" +
+	"target_tag\"\x9e\x04\n" +
 	"\x13AsyncDnsRouteConfig\x12\x1a\n" +
 	"\bendpoint\x18\x01 \x01(\tR\bendpoint\x124\n" +
 	"\x16request_timeout_millis\x18\x02 \x01(\rR\x14requestTimeoutMillis\x12%\n" +
@@ -840,7 +850,8 @@ const file_app_router_config_proto_rawDesc = "" +
 	" \x01(\rR\n" +
 	"maxWaiters\x12#\n" +
 	"\rsnapshot_path\x18\v \x01(\tR\fsnapshotPath\x12:\n" +
-	"\x19snapshot_compatibility_id\x18\f \x01(\tR\x17snapshotCompatibilityId\"\xca\x01\n" +
+	"\x19snapshot_compatibility_id\x18\f \x01(\tR\x17snapshotCompatibilityId\x12%\n" +
+	"\x0ematch_decision\x18\r \x01(\tR\rmatchDecision\"\xca\x01\n" +
 	"\rWebhookConfig\x12\x10\n" +
 	"\x03url\x18\x01 \x01(\tR\x03url\x12$\n" +
 	"\rdeduplication\x18\x02 \x01(\rR\rdeduplication\x12E\n" +
