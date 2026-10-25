@@ -487,6 +487,11 @@ func (d *DefaultDispatcher) routedDispatch(ctx context.Context, link *transport.
 
 	ob.Tag = handler.Tag()
 	if accessMessage := log.AccessMessageFromContext(ctx); accessMessage != nil {
+		// Loopback dispatch reuses this context after Record queued the previous
+		// message. Keep route-specific fields local to this log record so the
+		// asynchronous logger never reads a Detour mutated by the next hop.
+		record := *accessMessage
+		accessMessage = &record
 		if tag := handler.Tag(); tag != "" {
 			if inTag == "" {
 				accessMessage.Detour = tag
