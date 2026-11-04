@@ -287,15 +287,67 @@ func TestAsyncDNSPoolCancellationStopsFailover(t *testing.T) {
 	}
 }
 
-func TestAsyncDNSPoolUsesSixEndpointsAndConcurrentStateIsBounded(t *testing.T) {
+func TestAsyncDNSPoolConcurrentCandidateSelectionIsRoundRobin(t *testing.T) {
 	counts := make([]atomic.Int32, 6)
 	handlers := make([]http.HandlerFunc, 6)
 	for i := range handlers {
-		handlers[i] = func(w http.ResponseWriter, r *http.Request) { counts[i].Add(1); io.WriteString(w, poolReady) }
+		handlers[i] = func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, poolReady) }
 	}
 	m := newAsyncDNSPoolTestMatcher(t, &AsyncDnsRouteConfig{RequestTimeoutMillis: 600}, handlers...)
 	var wg sync.WaitGroup
-	for i := range 60 {
+	for range 60 {
+		wg.Go(func() {
+			candidates, skipped := m.pool.candidates(time.Now())
+			if skipped != 0 || len(candidates) != 6 {
+				t.Error("healthy pool lost a candidate")
+				return
+			}
+			seen := make(map[string]bool)
+			for _, candidate := range candidates {
+				if seen[candidate.endpoint] {
+					t.Error("duplicate endpoint candidate")
+				}
+				seen[candidate.endpoint] = true
+			}
+			counts[candidates[0].diagnostic.Index].Add(1)
+		})
+	}
+	wg.Wait()
+	for i := range counts {
+		if counts[i].Load() != 10 {
+			t.Fatalf("endpoint %d did not receive its round-robin first choice: %d", i, counts[i].Load())
+		}
+	}
+	if len(m.pool.states) != 6 || len(m.pool.allowed) != 6 || m.Stats().PoolAttempts != 0 {
+		t.Fatal("candidate selection grew pool state or started requests")
+	}
+}
+
+func TestAsyncDNSPoolUsesSixEndpointsAndConcurrentStateIsBounded(t *testing.T) {
+	const requests = 60
+	counts := make([]atomic.Int32, 6)
+	var received atomic.Int32
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	handlers := make([]http.HandlerFunc, 6)
+	for i := range handlers {
+		handlers[i] = func(w http.ResponseWriter, r *http.Request) {
+			counts[i].Add(1)
+			// Hold responses until a real hedge arrives, without relying on
+			// loopback latency or race-instrumented scheduler timing.
+			if received.Add(1) > requests {
+				releaseOnce.Do(func() { close(release) })
+			}
+			select {
+			case <-release:
+				io.WriteString(w, poolReady)
+			case <-r.Context().Done():
+			}
+		}
+	}
+	m := newAsyncDNSPoolTestMatcher(t, &AsyncDnsRouteConfig{RequestTimeoutMillis: 5000}, handlers...)
+	var wg sync.WaitGroup
+	for i := range requests {
 		wg.Go(func() {
 			if _, err := m.fetch(fmt.Sprintf("parallel-%d.example", i)); err != nil {
 				t.Error(err)
@@ -303,12 +355,19 @@ func TestAsyncDNSPoolUsesSixEndpointsAndConcurrentStateIsBounded(t *testing.T) {
 		})
 	}
 	wg.Wait()
+	var total int32
 	for i := range counts {
-		if counts[i].Load() != 10 {
-			t.Fatalf("endpoint %d did not receive its bounded round-robin share: %d", i, counts[i].Load())
+		calls := counts[i].Load()
+		if calls == 0 || calls > requests {
+			t.Fatalf("endpoint %d exceeded aggregate attempt bound or was unused: %d", i, calls)
 		}
+		total += calls
 	}
-	if len(m.pool.states) != 6 || len(m.pool.allowed) != 6 || m.Stats().PoolAttempts != 60 {
+	stats := m.Stats()
+	if total <= requests || uint64(total) > stats.PoolAttempts || stats.PoolAttempts > requests*6 || stats.PoolFailovers != stats.PoolAttempts-requests {
+		t.Fatalf("hedged request accounting escaped bounds: received=%d stats=%+v", total, stats)
+	}
+	if len(m.pool.states) != 6 || len(m.pool.allowed) != 6 {
 		t.Fatal("pool health state or requests grew beyond its configured bounds")
 	}
 }
