@@ -131,6 +131,7 @@ type WebhookRuleConfig struct {
 }
 
 type AsyncDNSRouteRuleConfig struct {
+	MatchDecision           string `json:"matchDecision"`
 	Endpoint                string `json:"endpoint"`
 	RequestTimeoutMillis    uint32 `json:"requestTimeoutMillis"`
 	CacheCapacity           uint32 `json:"cacheCapacity"`
@@ -299,8 +300,13 @@ func parseFieldRule(msg json.RawMessage) (*router.RoutingRule, error) {
 	}
 
 	if rawFieldRule.AsyncDNSRoute != nil {
+		decision := rawFieldRule.AsyncDNSRoute.MatchDecision
+		if decision != "" && decision != "ru" && decision != "non_ru" {
+			return nil, errors.New("async DNS matchDecision must be ru or non_ru")
+		}
 		rule.AsyncDnsRoute = &router.AsyncDnsRouteConfig{
 			Endpoint:                rawFieldRule.AsyncDNSRoute.Endpoint,
+			MatchDecision:           decision,
 			RequestTimeoutMillis:    rawFieldRule.AsyncDNSRoute.RequestTimeoutMillis,
 			CacheCapacity:           rawFieldRule.AsyncDNSRoute.CacheCapacity,
 			QueueCapacity:           rawFieldRule.AsyncDNSRoute.QueueCapacity,

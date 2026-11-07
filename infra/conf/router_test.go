@@ -286,3 +286,29 @@ func TestRouterConfigAsyncDNSRejectsUnknownOptions(t *testing.T) {
 		t.Fatal("unsupported cache option silently ignored")
 	}
 }
+
+func TestRouterConfigAsyncDNSMatchDecision(t *testing.T) {
+	for _, mode := range []string{"", "ru", "non_ru", "other", "!ru", "NON_RU"} {
+		t.Run(mode, func(t *testing.T) {
+			config := new(RouterConfig)
+			body := `{"rules":[{"outboundTag":"primary","asyncDnsRoute":{"endpoint":"https://example.org/v1/classify","matchDecision":"` + mode + `"}}]}`
+			if err := json.Unmarshal([]byte(body), config); err != nil {
+				t.Fatal(err)
+			}
+			built, err := config.Build()
+			valid := mode == "" || mode == "ru" || mode == "non_ru"
+			if !valid {
+				if err == nil {
+					t.Fatal("unsupported decision compiled")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := built.Rule[0].AsyncDnsRoute.GetMatchDecision(); got != mode {
+				t.Fatalf("compiled %q want %q", got, mode)
+			}
+		})
+	}
+}

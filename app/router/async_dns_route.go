@@ -37,6 +37,7 @@ var asyncDNSMatcherSequence atomic.Uint64
 
 type asyncDNSCacheEntry struct {
 	routeRU         bool
+	nonRuConfirmed  bool
 	freshUntil      time.Time
 	hardUntil       time.Time
 	serverHardUntil time.Time
@@ -65,6 +66,7 @@ type asyncDNSClassifierRequest struct {
 type asyncDNSClassifierResponse struct {
 	State            string `json:"state"`
 	Route            string `json:"route"`
+	NonRuConfirmed   bool   `json:"nonRuConfirmed"`
 	TTLMillis        uint32 `json:"ttlMillis"`
 	StaleTTLMillis   uint32 `json:"staleTtlMillis"`
 	Generation       string `json:"generation"`
@@ -76,6 +78,7 @@ type asyncDNSClassifierResponse struct {
 // worker's first response. A zero budget keeps the legacy non-blocking behavior.
 type AsyncDNSRouteMatcher struct {
 	endpoint        string
+	matchNonRU      bool
 	bearerToken     string
 	overlayEndpoint string
 	client          *http.Client
@@ -192,6 +195,11 @@ func NewAsyncDNSRouteMatcher(config *AsyncDnsRouteConfig) (*AsyncDNSRouteMatcher
 		return nil, errors.New("async DNS route config is nil")
 	}
 
+	decision := config.GetMatchDecision()
+	if decision != "" && decision != "ru" && decision != "non_ru" {
+		return nil, errors.New("async DNS matchDecision must be ru or non_ru")
+	}
+
 	endpoint, err := url.ParseRequestURI(config.GetEndpoint())
 	if err != nil || endpoint.Scheme == "" || endpoint.Host == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") {
 		return nil, errors.New("async DNS route endpoint must be an absolute HTTP(S) URL")
@@ -257,6 +265,7 @@ func NewAsyncDNSRouteMatcher(config *AsyncDnsRouteConfig) (*AsyncDNSRouteMatcher
 
 	m := &AsyncDNSRouteMatcher{
 		endpoint:        endpoint.String(),
+		matchNonRU:      decision == "non_ru",
 		bearerToken:     bearerToken,
 		overlayEndpoint: overlayEndpoint,
 		client: &http.Client{
@@ -480,6 +489,11 @@ func (m *AsyncDNSRouteMatcher) lookup(domain string, now time.Time) (bool, bool)
 				m.stats.freshHits.Add(1)
 			} else {
 				m.stats.staleHits.Add(1)
+			}
+			// Foreign routing needs positive answer-set provenance and fresh TTL.
+			// Legacy other, mixed/unknown answers and retained stale never grant it.
+			if m.matchNonRU {
+				return !entry.routeRU && entry.nonRuConfirmed && now.Before(entry.freshUntil), true
 			}
 			return entry.routeRU, true
 		}
@@ -731,7 +745,7 @@ func (m *AsyncDNSRouteMatcher) acceptResponse(domain string, response *asyncDNSC
 	}
 	fresh := time.Duration(response.TTLMillis)*time.Millisecond - elapsed
 	hard := time.Duration(response.StaleTTLMillis)*time.Millisecond - elapsed
-	entry := asyncDNSCacheEntry{routeRU: response.Route == "ru", lastUsed: now, generation: response.Generation}
+	entry := asyncDNSCacheEntry{routeRU: response.Route == "ru", nonRuConfirmed: response.Route == "other" && response.NonRuConfirmed, lastUsed: now, generation: response.Generation}
 	if previous, ok := m.cache[domain]; ok {
 		entry.lastUsed = previous.lastUsed
 	}
