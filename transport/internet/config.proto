@@ -161,6 +161,9 @@ message SocketConfig {
   HappyEyeballsConfig happy_eyeballs = 22;
 
   repeated string trusted_x_forwarded_for = 23;
+
+  // Explicit Linux TCP IPv4 actual-socket country policy; unknown destinations deny.
+  CountryMarkGuard country_mark_guard = 24;
 }
 
 message HappyEyeballsConfig {
@@ -168,4 +171,11 @@ message HappyEyeballsConfig {
   uint32 interleave = 2;
   uint64 try_delayMs = 3;
   uint32 max_concurrent_try = 4;
+}
+
+message CountryMarkGuard {
+  uint32 ru_mark = 1;
+  uint32 non_ru_mark = 2;
+  string geoip_file = 3;
+  string geoip_sha256 = 4;
 }

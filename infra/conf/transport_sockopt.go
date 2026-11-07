@@ -1,6 +1,8 @@
 package conf
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"math"
 	"strings"
@@ -42,31 +44,57 @@ func (h *HappyEyeballsConfig) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+type CountryMarkGuardConfig struct {
+	RuMark      uint32 `json:"ruMark"`
+	NonRuMark   uint32 `json:"nonRuMark"`
+	GeoIPFile   string `json:"geoipFile"`
+	GeoIPSHA256 string `json:"geoipSHA256"`
+}
+
+func (c *CountryMarkGuardConfig) UnmarshalJSON(data []byte) error {
+	type raw CountryMarkGuardConfig
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	return decoder.Decode((*raw)(c))
+}
+
 type SocketConfig struct {
-	Mark                  int32                  `json:"mark"`
-	TFO                   interface{}            `json:"tcpFastOpen"`
-	TProxy                string                 `json:"tproxy"`
-	AcceptProxyProtocol   bool                   `json:"acceptProxyProtocol"`
-	DomainStrategy        string                 `json:"domainStrategy"`
-	DialerProxy           string                 `json:"dialerProxy"`
-	TCPKeepAliveInterval  int32                  `json:"tcpKeepAliveInterval"`
-	TCPKeepAliveIdle      int32                  `json:"tcpKeepAliveIdle"`
-	TCPCongestion         string                 `json:"tcpCongestion"`
-	TCPWindowClamp        int32                  `json:"tcpWindowClamp"`
-	TCPMaxSeg             int32                  `json:"tcpMaxSeg"`
-	Penetrate             bool                   `json:"penetrate"`
-	TCPUserTimeout        int32                  `json:"tcpUserTimeout"`
-	V6only                bool                   `json:"v6only"`
-	Interface             string                 `json:"interface"`
-	TcpMptcp              bool                   `json:"tcpMptcp"`
-	CustomSockopt         []*CustomSockoptConfig `json:"customSockopt"`
-	AddressPortStrategy   string                 `json:"addressPortStrategy"`
-	HappyEyeballsSettings *HappyEyeballsConfig   `json:"happyEyeballs"`
-	TrustedXForwardedFor  []string               `json:"trustedXForwardedFor"`
+	CountryMarkGuard      *CountryMarkGuardConfig `json:"countryMarkGuard"`
+	Mark                  int32                   `json:"mark"`
+	TFO                   interface{}             `json:"tcpFastOpen"`
+	TProxy                string                  `json:"tproxy"`
+	AcceptProxyProtocol   bool                    `json:"acceptProxyProtocol"`
+	DomainStrategy        string                  `json:"domainStrategy"`
+	DialerProxy           string                  `json:"dialerProxy"`
+	TCPKeepAliveInterval  int32                   `json:"tcpKeepAliveInterval"`
+	TCPKeepAliveIdle      int32                   `json:"tcpKeepAliveIdle"`
+	TCPCongestion         string                  `json:"tcpCongestion"`
+	TCPWindowClamp        int32                   `json:"tcpWindowClamp"`
+	TCPMaxSeg             int32                   `json:"tcpMaxSeg"`
+	Penetrate             bool                    `json:"penetrate"`
+	TCPUserTimeout        int32                   `json:"tcpUserTimeout"`
+	V6only                bool                    `json:"v6only"`
+	Interface             string                  `json:"interface"`
+	TcpMptcp              bool                    `json:"tcpMptcp"`
+	CustomSockopt         []*CustomSockoptConfig  `json:"customSockopt"`
+	AddressPortStrategy   string                  `json:"addressPortStrategy"`
+	HappyEyeballsSettings *HappyEyeballsConfig    `json:"happyEyeballs"`
+	TrustedXForwardedFor  []string                `json:"trustedXForwardedFor"`
 }
 
 // Build implements Buildable.
 func (c *SocketConfig) Build() (*internet.SocketConfig, error) {
+	var country *internet.CountryMarkGuard
+	if c.CountryMarkGuard != nil {
+		if c.DialerProxy != "" || c.Interface != "" || len(c.CustomSockopt) > 0 || c.TcpMptcp || (c.TProxy != "" && strings.ToLower(c.TProxy) != "off") {
+			return nil, errors.New("country mark guard rejects unsupported socket routing paths")
+		}
+		guard := c.CountryMarkGuard
+		country = &internet.CountryMarkGuard{RuMark: guard.RuMark, NonRuMark: guard.NonRuMark, GeoipFile: guard.GeoIPFile, GeoipSha256: guard.GeoIPSHA256}
+		if err := internet.PrepareCountryMarkGuard(context.Background(), country); err != nil {
+			return nil, err
+		}
+	}
 	tfo := int32(0) // don't invoke setsockopt() for TFO
 	if c.TFO != nil {
 		switch v := c.TFO.(type) {
@@ -164,6 +192,7 @@ func (c *SocketConfig) Build() (*internet.SocketConfig, error) {
 
 	return &internet.SocketConfig{
 		Mark:                 c.Mark,
+		CountryMarkGuard:     country,
 		Tfo:                  tfo,
 		Tproxy:               tproxy,
 		DomainStrategy:       dStrategy,
