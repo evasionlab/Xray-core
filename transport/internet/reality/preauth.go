@@ -44,17 +44,26 @@ func serverWithHandshakeBudget(ctx context.Context, c net.Conn, config *gorealit
 		c.Close()
 		return nil, err
 	}
-	connectionConfig := *config
+	connectionConfig := configWithDialBudget(ctx, config, deadline)
+	realityConn, err := goreality.Server(ctx, &prefetchedConn{Conn: c, prefix: prefix}, connectionConfig)
+	if err != nil {
+		return nil, err
+	}
+	return &Conn{Conn: realityConn}, nil
+}
+
+// Clone through the library to avoid copying its session-ticket mutex/state.
+// This pinned REALITY version's Clone omits its ML-DSA key, so retain that
+// immutable configuration field explicitly as well.
+func configWithDialBudget(ctx context.Context, config *goreality.Config, deadline time.Time) *goreality.Config {
+	connectionConfig := config.Clone()
+	connectionConfig.Mldsa65Key = config.Mldsa65Key
 	connectionConfig.DialContext = func(_ context.Context, network, address string) (net.Conn, error) {
 		dialContext, cancel := context.WithDeadline(ctx, deadline)
 		defer cancel()
 		return config.DialContext(dialContext, network, address)
 	}
-	realityConn, err := goreality.Server(ctx, &prefetchedConn{Conn: c, prefix: prefix}, &connectionConfig)
-	if err != nil {
-		return nil, err
-	}
-	return &Conn{Conn: realityConn}, nil
+	return connectionConfig
 }
 
 const (
