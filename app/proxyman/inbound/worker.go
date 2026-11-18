@@ -15,6 +15,7 @@ import (
 	"github.com/xtls/xray-core/common/session"
 	"github.com/xtls/xray-core/common/signal/done"
 	"github.com/xtls/xray-core/common/task"
+	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/routing"
 	"github.com/xtls/xray-core/features/stats"
 	"github.com/xtls/xray-core/proxy"
@@ -149,7 +150,8 @@ func (w *tcpWorker) Proxy() proxy.Inbound {
 }
 
 func (w *tcpWorker) Start() error {
-	ctx := context.Background()
+	// Keep listener lifetime detached while retaining this Core's transport policy.
+	ctx := core.ToBackgroundDetachedContext(w.ctx)
 
 	if v, ok := w.proxy.(*hysteria_proxy.Server); ok {
 		ctx = hysteria.ContextWithValidator(ctx, v.HysteriaInboundValidator())
