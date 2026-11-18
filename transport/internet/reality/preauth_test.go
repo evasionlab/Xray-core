@@ -210,6 +210,10 @@ func TestServerPreservesAuthenticatedREALITYAfterBudget(t *testing.T) {
 			return
 		}
 		defer c.Close()
+		if c.(*Conn).NetConn() != server {
+			done <- errors.New("authenticated REALITY did not preserve original TCP socket identity")
+			return
+		}
 		_, err = io.Copy(c, c)
 		done <- err
 	}()
@@ -267,5 +271,17 @@ func TestServerBoundsCamouflageDialByRemainingBudget(t *testing.T) {
 	}
 	if dials.Load() != 1 {
 		t.Fatalf("expected one dial, got %d", dials.Load())
+	}
+}
+
+func TestConfigWithDialBudgetPreservesREALITYConfiguration(t *testing.T) {
+	_, key := testTLSBackend(t)
+	original := serverConfig("camouflage.test:443", key)
+	original.Mldsa65Key = []byte("immutable-mldsa-key")
+	original.LimitFallbackUpload = goreality.LimitFallback{AfterBytes: 64, BytesPerSec: 128, BurstBytesPerSec: 256}
+	original.LimitFallbackDownload = goreality.LimitFallback{AfterBytes: 128, BytesPerSec: 256, BurstBytesPerSec: 512}
+	clone := configWithDialBudget(context.Background(), original, time.Now().Add(time.Second))
+	if clone == original || clone.Dest != original.Dest || clone.Type != original.Type || !bytes.Equal(clone.PrivateKey, original.PrivateKey) || !bytes.Equal(clone.Mldsa65Key, original.Mldsa65Key) || !clone.ServerNames["fallback.test"] || !clone.ShortIds[[8]byte{}] || clone.LimitFallbackUpload != original.LimitFallbackUpload || clone.LimitFallbackDownload != original.LimitFallbackDownload {
+		t.Fatal("per-connection configuration lost REALITY authority or fallback settings")
 	}
 }

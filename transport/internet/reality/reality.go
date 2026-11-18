@@ -38,6 +38,16 @@ type Conn struct {
 	*reality.Conn
 }
 
+// NetConn preserves the direct transport identity used by socket-bound admission
+// and TCP splice paths after the ClientHello prefix has been consumed.
+func (c *Conn) NetConn() net.Conn {
+	underlying := c.Conn.NetConn()
+	if prefetched, ok := underlying.(*prefetchedConn); ok {
+		return prefetched.Conn
+	}
+	return underlying
+}
+
 func (c *Conn) HandshakeAddress() net.Address {
 	if err := c.Handshake(); err != nil {
 		return nil
