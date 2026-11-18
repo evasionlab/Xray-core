@@ -303,15 +303,7 @@ func (m *ClientWorker) IsClosing() bool {
 // IsFull returns true if this ClientWorker is unable to accept more connections.
 // it might be because it is closing, or the number of connections has reached the limit.
 func (m *ClientWorker) IsFull() bool {
-	if m.IsClosing() || m.Closed() {
-		return true
-	}
-
-	sm := m.sessionManager
-	if m.strategy.MaxConcurrency > 0 && sm.Size() >= int(m.strategy.MaxConcurrency) {
-		return true
-	}
-	return false
+	return !m.sessionManager.canAllocate(m.strategy) || m.Closed()
 }
 
 func (m *ClientWorker) Dispatch(ctx context.Context, link *transport.Link) bool {

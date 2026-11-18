@@ -5,6 +5,7 @@ import (
 	"io"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/xtls/xray-core/common"
@@ -21,6 +22,29 @@ type SessionManager struct {
 	sessions map[uint16]*Session
 	count    uint16
 	closed   bool
+
+	// Mirrors the locked state for admission checks on large client pools.
+	// The low 32 bits are active sessions, the next 16 the lifetime count,
+	// and the highest bit reports closure.
+	admission atomic.Uint64
+}
+
+const admissionClosed = uint64(1) << 63
+
+// publishAdmission must run with the session mutex held.
+func (m *SessionManager) publishAdmission() {
+	state := uint64(m.count)<<32 | uint64(len(m.sessions))
+	if m.closed {
+		state |= admissionClosed
+	}
+	m.admission.Store(state)
+}
+
+func (m *SessionManager) canAllocate(strategy ClientStrategy) bool {
+	state := m.admission.Load()
+	return state&admissionClosed == 0 &&
+		(strategy.MaxConnection == 0 || uint32(uint16(state>>32)) < uint32(strategy.MaxConnection)) &&
+		(strategy.MaxConcurrency == 0 || uint32(state) < uint32(strategy.MaxConcurrency))
 }
 
 func NewSessionManager() *SessionManager {
@@ -69,6 +93,7 @@ func (m *SessionManager) Allocate(Strategy *ClientStrategy) *Session {
 		done:   done.New(),
 	}
 	m.sessions[s.ID] = s
+	m.publishAdmission()
 	return s
 }
 
@@ -82,6 +107,7 @@ func (m *SessionManager) Add(s *Session) bool {
 
 	m.count++
 	m.sessions[s.ID] = s
+	m.publishAdmission()
 	return true
 }
 
@@ -97,6 +123,7 @@ func (m *SessionManager) Remove(locked bool, id uint16) {
 	}
 
 	delete(m.sessions, id)
+	m.publishAdmission()
 
 	/*
 		if len(m.sessions) == 0 {
@@ -132,6 +159,7 @@ func (m *SessionManager) CloseIfNoSessionAndIdle(checkSize int, checkCount int) 
 	m.closed = true
 
 	m.sessions = nil
+	m.publishAdmission()
 	return true
 }
 
@@ -150,6 +178,7 @@ func (m *SessionManager) Close() error {
 	}
 
 	m.sessions = nil
+	m.publishAdmission()
 	return nil
 }
 

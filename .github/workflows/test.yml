@@ -170,4 +170,4 @@ jobs:
       - name: Validate runtime interface and buffer contracts under races
         env:
           CGO_ENABLED: '1'
-        run: go test -count=1 -race ./features/routing ./proxy/vless/inbound ./proxy/trojan ./common/buf ./transport/pipe ./proxy/freedom ./proxy/vless/encoding
+        run: go test -count=1 -race ./features/routing ./proxy/vless/inbound ./proxy/trojan ./common/buf ./common/mux ./transport/pipe ./proxy/freedom ./proxy/vless/encoding
