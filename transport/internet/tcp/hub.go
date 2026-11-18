@@ -18,6 +18,7 @@ import (
 
 // Listener is an internet.Listener that listens for TCP connections.
 type Listener struct {
+	ctx           context.Context
 	listener      net.Listener
 	tlsConfig     *gotls.Config
 	realityConfig *goreality.Config
@@ -29,6 +30,7 @@ type Listener struct {
 // ListenTCP creates a new Listener based on configurations.
 func ListenTCP(ctx context.Context, address net.Address, port net.Port, streamSettings *internet.MemoryStreamConfig, handler internet.ConnHandler) (internet.Listener, error) {
 	l := &Listener{
+		ctx:     ctx,
 		addConn: handler,
 	}
 	tcpSettings := streamSettings.ProtocolSettings.(*Config)
@@ -114,7 +116,7 @@ func (v *Listener) keepAccepting() {
 			if v.tlsConfig != nil {
 				conn = tls.Server(conn, v.tlsConfig)
 			} else if v.realityConfig != nil {
-				if conn, err = reality.Server(conn, v.realityConfig); err != nil {
+				if conn, err = reality.ServerWithContext(v.ctx, conn, v.realityConfig); err != nil {
 					errors.LogInfo(context.Background(), err.Error())
 					return
 				}

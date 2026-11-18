@@ -50,8 +50,7 @@ func (c *Conn) HandshakeAddress() net.Address {
 }
 
 func Server(c net.Conn, config *reality.Config) (net.Conn, error) {
-	realityConn, err := reality.Server(context.Background(), c, config)
-	return &Conn{Conn: realityConn}, err
+	return ServerWithContext(context.Background(), c, config)
 }
 
 type UConn struct {
